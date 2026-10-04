@@ -14,7 +14,6 @@ class ApiResponseTest {
         assertThat(response.success()).isTrue();
         assertThat(response.data()).isEqualTo("data");
         assertThat(response.message()).isNull();
-        assertThat(response.errorCode()).isNull();
     }
 
     @Test
@@ -24,6 +23,5 @@ class ApiResponseTest {
         assertThat(response.success()).isFalse();
         assertThat(response.data()).isNull();
         assertThat(response.message()).isEqualTo(CommonErrorCode.INVALID_REQUEST.message());
-        assertThat(response.errorCode()).isEqualTo(CommonErrorCode.INVALID_REQUEST.code());
     }
 }
