@@ -21,7 +21,7 @@ public enum IdentityErrorCode implements ErrorCode {
     ),
     WITHDRAWN_MEMBER(
             "WITHDRAWN_MEMBER",
-            "탈퇴한 회원은 로그인할 수 없습니다.",
+            "탈퇴한 회원입니다.",
             ErrorType.FORBIDDEN
     ),
     SOCIAL_ACCOUNT_CONFLICT(
@@ -31,6 +31,11 @@ public enum IdentityErrorCode implements ErrorCode {
     ),
     INVALID_REFRESH_TOKEN(
             "INVALID_REFRESH_TOKEN",
+            "인증 정보가 유효하지 않습니다.",
+            ErrorType.UNAUTHORIZED
+    ),
+    INVALID_AUTHENTICATION(
+            "INVALID_AUTHENTICATION",
             "인증 정보가 유효하지 않습니다.",
             ErrorType.UNAUTHORIZED
     );

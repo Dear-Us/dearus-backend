@@ -2,6 +2,7 @@ package com.dearusback.identity.infrastructure;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -47,6 +48,10 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -92,6 +97,9 @@ class IdentityMariaDbIntegrationTest {
 
     @Autowired
     private MockMvc mvc;
+
+    @Autowired
+    private JwtEncoder jwtEncoder;
 
     @Autowired
     private AuthProperties authProperties;
@@ -372,6 +380,132 @@ class IdentityMariaDbIntegrationTest {
                     Integer.class, original.member().memberId()))
                     .isEqualTo(reissueResult instanceof ReissueTokenResult ? 2 : 1);
         }
+    }
+
+    @Test
+    void validAccessTokenReturnsPersistedMemberAndSocialAccountWithoutInternalIdentity() throws Exception {
+        String providerUserId = UUID.randomUUID().toString();
+        SocialLoginResult loginResult = login.loginOrRegister(new VerifiedSocialIdentity(
+                SocialProvider.GOOGLE, providerUserId, "google@example.com", "김소은", null
+        ));
+        jdbc.update("UPDATE member SET member_name = ?, email = ?, profile_image_url = ?, last_selected_baby_id = ? WHERE member_id = ?",
+                "기존 이름", "member@example.com", "https://example.com/profile.png", 77L,
+                loginResult.member().memberId());
+        login.loginOrRegister(new VerifiedSocialIdentity(
+                SocialProvider.GOOGLE, providerUserId, "google@example.com", "Provider 이름", null
+        ));
+
+        String body = mvc.perform(get("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + loginResult.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.memberId").value(loginResult.member().memberId()))
+                .andExpect(jsonPath("$.data.email").value("member@example.com"))
+                .andExpect(jsonPath("$.data.memberName").value("기존 이름"))
+                .andExpect(jsonPath("$.data.profileImageUrl").value("https://example.com/profile.png"))
+                .andExpect(jsonPath("$.data.timezone").value("Asia/Seoul"))
+                .andExpect(jsonPath("$.data.lastSelectedBabyId").value(77))
+                .andExpect(jsonPath("$.data.socialAccounts[0].provider").value("GOOGLE"))
+                .andExpect(jsonPath("$.data.socialAccounts[0].providerEmail").value("google@example.com"))
+                .andExpect(jsonPath("$.message").isEmpty())
+                .andExpect(jsonPath("$.errorCode").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(body).doesNotContain("providerUserId", providerUserId, "socialAccountId");
+    }
+
+    @Test
+    void nullableProfileAndSocialEmailRemainNull() throws Exception {
+        SocialLoginResult loginResult = register();
+
+        mvc.perform(get("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + loginResult.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.email").isEmpty())
+                .andExpect(jsonPath("$.data.timezone").value("Asia/Seoul"))
+                .andExpect(jsonPath("$.data.profileImageUrl").isEmpty())
+                .andExpect(jsonPath("$.data.lastSelectedBabyId").isEmpty())
+                .andExpect(jsonPath("$.data.socialAccounts[0].providerEmail").isEmpty());
+    }
+
+    @Test
+    void missingMalformedTamperedExpiredWrongIssuerAndInvalidSubjectTokensShareOneUnauthorizedResponse()
+            throws Exception {
+        SocialLoginResult loginResult = register();
+        String original = loginResult.accessToken();
+        int signatureStart = original.lastIndexOf('.') + 1;
+        String tampered = original.substring(0, signatureStart)
+                + (original.charAt(signatureStart) == 'A' ? 'B' : 'A')
+                + original.substring(signatureStart + 1);
+
+        assertUnauthorizedProfile(null);
+        assertUnauthorizedProfile("Basic credentials");
+        assertUnauthorizedProfile("Bearer");
+        assertUnauthorizedProfile("Bearer " + tampered);
+        assertUnauthorizedProfile("Bearer " + signedToken("1", "dearus", Instant.now().minusSeconds(60)));
+        assertUnauthorizedProfile("Bearer " + signedToken("1", "another-issuer", Instant.now().plusSeconds(600)));
+        assertUnauthorizedProfile("Bearer " + signedToken("1", "dearus", null));
+        assertUnauthorizedProfile("Bearer " + signedToken(null, "dearus", Instant.now().plusSeconds(600)));
+        assertUnauthorizedProfile("Bearer " + signedToken("not-a-member-id", "dearus", Instant.now().plusSeconds(600)));
+        assertUnauthorizedProfile("Bearer " + signedToken("9223372036854775808", "dearus", Instant.now().plusSeconds(600)));
+    }
+
+    @Test
+    void validJwtForMissingMemberIsUnauthorized() throws Exception {
+        assertUnauthorizedProfile("Bearer " + signedToken(
+                "9223372036854775807", "dearus", Instant.now().plusSeconds(600)
+        ));
+    }
+
+    @Test
+    void withdrawnMemberIsForbiddenEvenWithValidAccessToken() throws Exception {
+        SocialLoginResult loginResult = register();
+        jdbc.update("UPDATE member SET is_deleted = true WHERE member_id = ?", loginResult.member().memberId());
+
+        String response = mvc.perform(get("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + loginResult.accessToken()))
+                .andExpect(status().isForbidden())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(response).isEqualTo("{\"success\":false,\"data\":null,\"message\":\"탈퇴한 회원입니다.\"}");
+    }
+
+    @Test
+    void publicAuthRouteDoesNotRequireJwtAndOnlyPostIsPublic() throws Exception {
+        mvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\":\"APPLE\",\"providerToken\":\"token\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/auth/login"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    private void assertUnauthorizedProfile(String authorization) throws Exception {
+        var request = get("/api/v1/members/me");
+        if (authorization != null) {
+            request.header("Authorization", authorization);
+        }
+        String response = mvc.perform(request)
+                .andExpect(status().isUnauthorized())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(response).isEqualTo(
+                "{\"success\":false,\"data\":null,\"message\":\"인증 정보가 유효하지 않습니다.\"}"
+        );
+    }
+
+    private String signedToken(String subject, String issuer, Instant expiresAt) {
+        JwtClaimsSet.Builder claims = JwtClaimsSet.builder()
+                .issuer(issuer)
+                .issuedAt(Instant.now().minusSeconds(3600));
+        if (expiresAt != null) {
+            claims.expiresAt(expiresAt);
+        }
+        if (subject != null) {
+            claims.subject(subject);
+        }
+        return jwtEncoder.encode(JwtEncoderParameters.from(
+                JwsHeader.with(MacAlgorithm.HS256).type("JWT").build(), claims.build()
+        )).getTokenValue();
     }
 
     private SocialLoginResult register() {
