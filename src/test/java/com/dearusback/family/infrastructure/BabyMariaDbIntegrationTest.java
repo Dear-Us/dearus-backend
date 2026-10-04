@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +31,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpMethod;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.mock.web.MockMultipartFile;
@@ -41,6 +43,7 @@ import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mariadb.MariaDBContainer;
@@ -413,6 +416,241 @@ class BabyMariaDbIntegrationTest {
         assertFailure(detailBaby(id, token(insertMember("Asia/Seoul", true)), 403));
     }
 
+    @Test
+    void ownerCanPatchFieldsIndividuallyAndTogetherWithoutChangingOwnershipOrSelection() throws Exception {
+        long memberId = insertMember("Asia/Seoul", false);
+        long babyId = insertBaby(memberId, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(babyId, memberId, "OWNER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", babyId, memberId);
+        String jwt = token(memberId);
+        var membershipBefore = membershipRow(babyId, memberId);
+        String today = LocalDate.now(ZoneId.of("Asia/Seoul")).toString();
+
+        JsonNode renamed = patchBaby(Long.toString(babyId), jwt, "{\"babyName\":\"  도윤이  \"}", null, 200);
+        assertSuccessDetail(renamed);
+        assertBabyResponse(renamed.path("data"), babyId, "도윤이", "2020-01-01", "MALE", null, "OWNER");
+        JsonNode changedDate = patchBaby(Long.toString(babyId), jwt,
+                "{\"birthDate\":\"" + today + "\"}", null, 200);
+        assertBabyResponse(changedDate.path("data"), babyId, "도윤이", today, "MALE", null, "OWNER");
+        JsonNode changedGender = patchBaby(Long.toString(babyId), jwt, "{\"gender\":\"FEMALE\"}", null, 200);
+        assertBabyResponse(changedGender.path("data"), babyId, "도윤이", today, "FEMALE", null, "OWNER");
+        JsonNode multiple = patchBaby(Long.toString(babyId), jwt,
+                "{\"babyName\":\"예린\",\"birthDate\":\"2019-01-01\",\"gender\":\"MALE\"}",
+                null, 200);
+        assertBabyResponse(multiple.path("data"), babyId, "예린", "2019-01-01", "MALE", null, "OWNER");
+        JsonNode sameValue = patchBaby(Long.toString(babyId), jwt, "{\"babyName\":\"예린\"}", null, 200);
+        assertBabyResponse(sameValue.path("data"), babyId, "예린", "2019-01-01", "MALE", null, "OWNER");
+        assertBabyResponse(detailBaby(Long.toString(babyId), jwt, 200).path("data"),
+                babyId, "예린", "2019-01-01", "MALE", null, "OWNER");
+        assertThat(jdbc.queryForObject("SELECT created_by_member_id FROM baby WHERE baby_id = ?", Long.class, babyId))
+                .isEqualTo(memberId);
+        assertThat(membershipRow(babyId, memberId)).isEqualTo(membershipBefore);
+        assertThat(selectedBaby(memberId)).isEqualTo(babyId);
+        assertThat(storage.stored).isEmpty();
+    }
+
+    @Test
+    void patchValidationRejectsEmptyAndMalformedUpdatesWithoutChangingDatabase() throws Exception {
+        long memberId = insertMember("Asia/Seoul", false);
+        long babyId = insertBaby(memberId, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(babyId, memberId, "OWNER", "ACTIVE");
+        String jwt = token(memberId);
+        var before = babyRow(babyId);
+        for (String json : List.of("{}", "{\"removeProfileImage\":false}",
+                "{\"babyName\":\"   \"}", "{\"babyName\":\"" + "a".repeat(51) + "\"}",
+                "{\"birthDate\":\"" + LocalDate.now(ZoneId.of("Asia/Seoul")).plusDays(1) + "\"}",
+                "{\"birthDate\":\"2026-02-30\"}", "{\"gender\":\"OTHER\"}")) {
+            assertFailure(patchBaby(Long.toString(babyId), jwt, json, null, 400));
+        }
+        assertFailure(patchBaby("0", jwt, "{\"babyName\":\"변경\"}", null, 400));
+        assertFailure(patchBaby("invalid", jwt, "{\"babyName\":\"변경\"}", null, 400));
+        assertFailure(patchBaby(Long.toString(babyId), jwt, "{\"removeProfileImage\":true}",
+                image("image/jpeg", jpeg()), 400));
+        assertThat(babyRow(babyId)).isEqualTo(before);
+        assertThat(storage.stored).isEmpty();
+    }
+
+    @Test
+    void onlyActiveOwnerCanPatchAndDeniedRequestsNeverUpload() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long outsider = insertMember("Asia/Seoul", false);
+        Instant now = Instant.now();
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, now);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        long left = insertBaby(owner, "LEFT", "2020-01-01", "MALE", null, false, now);
+        insertMembership(left, owner, "OWNER", "LEFT");
+        long removed = insertBaby(owner, "REMOVED", "2020-01-01", "MALE", null, false, now);
+        insertMembership(removed, owner, "OWNER", "REMOVED");
+        long deleted = insertBaby(owner, "삭제", "2020-01-01", "MALE", null, true, now);
+        insertMembership(deleted, owner, "OWNER", "ACTIVE");
+        long noMembership = insertBaby(owner, "연결없음", "2020-01-01", "MALE", null, false, now);
+        long otherBaby = insertBaby(outsider, "다른가족", "2020-01-01", "MALE", null, false, now);
+        insertMembership(otherBaby, outsider, "OWNER", "ACTIVE");
+        MockMultipartFile upload = image("image/jpeg", jpeg());
+
+        assertFailure(patchBaby(Long.toString(baby), token(caregiver), "{}", upload, 403));
+        for (long inaccessible : new long[]{Long.MAX_VALUE, left, removed, deleted, noMembership, otherBaby}) {
+            JsonNode response = patchBaby(Long.toString(inaccessible), token(owner), "{}", upload, 404);
+            assertFailure(response);
+            assertThat(response.path("message").asText()).isEqualTo("아기 정보를 찾을 수 없습니다.");
+        }
+        assertThat(storage.stored).isEmpty();
+        assertThat(babyRow(baby).get("baby_name")).isEqualTo("도윤");
+    }
+
+    @Test
+    void patchRequiresValidAuthenticationAndActiveMember() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        String id = Long.toString(baby);
+        assertFailure(patchBaby(id, null, "{\"babyName\":\"변경\"}", null, 401));
+        assertFailure(patchBaby(id, "invalid.jwt", "{\"babyName\":\"변경\"}", null, 401));
+        assertFailure(patchBaby(id, token(Long.MAX_VALUE), "{\"babyName\":\"변경\"}", null, 401));
+        assertFailure(patchBaby(id, token(insertMember("Asia/Seoul", true)),
+                "{\"babyName\":\"변경\"}", null, 403));
+        assertThat(storage.stored).isEmpty();
+    }
+
+    @Test
+    void patchAcceptsSupportedImagesAndDeletesPreviousOnlyAfterCommit() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        String oldUrl = "https://images.example/babies/profile/old.jpg";
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", oldUrl, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        String jwt = token(owner);
+        String[] types = {"image/jpeg", "image/png", "image/webp"};
+        byte[][] bytes = {jpeg(), png(), "RIFF0000WEBP".getBytes(StandardCharsets.US_ASCII)};
+        String previous = oldUrl;
+        for (int index = 0; index < types.length; index++) {
+            JsonNode response = patchBaby(Long.toString(baby), jwt, "{}", image(types[index], bytes[index]), 200);
+            assertSuccessDetail(response);
+            String current = response.path("data").path("profileImageUrl").asText();
+            assertThat(current).startsWith("https://images.example/babies/profile/");
+            assertThat(current).endsWith(new String[]{".jpg", ".png", ".webp"}[index]);
+            assertThat(jdbc.queryForObject("SELECT profile_image_url FROM baby WHERE baby_id = ?", String.class, baby))
+                    .isEqualTo(current);
+            assertThat(storage.deleted).contains(previous);
+            previous = current;
+        }
+        assertThat(storage.stored).hasSize(3);
+        assertThat(storage.deleted).hasSize(3);
+        assertThat(storage.deletedDuringTransaction).containsExactly(false, false, false);
+        assertBabyResponse(detailBaby(Long.toString(baby), jwt, 200).path("data"),
+                baby, "도윤", "2020-01-01", "MALE", previous, "OWNER");
+    }
+
+    @Test
+    void removeImageClearsUrlAndCleanupFailureDoesNotRollback() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        String oldUrl = "https://images.example/babies/profile/old.jpg";
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", oldUrl, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        storage.failDelete.set(true);
+        JsonNode removed = patchBaby(Long.toString(baby), token(owner),
+                "{\"removeProfileImage\":true}", null, 200);
+        assertBabyResponse(removed.path("data"), baby, "도윤", "2020-01-01", "MALE", null, "OWNER");
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM baby WHERE baby_id = ?", String.class, baby))
+                .isNull();
+        assertThat(storage.deleted).isEmpty();
+
+        JsonNode again = patchBaby(Long.toString(baby), token(owner),
+                "{\"removeProfileImage\":true}", null, 200);
+        assertBabyResponse(again.path("data"), baby, "도윤", "2020-01-01", "MALE", null, "OWNER");
+        assertThat(storage.deleted).isEmpty();
+    }
+
+    @Test
+    void imageValidationAndUploadFailureDoNotChangeBaby() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        String jwt = token(owner);
+        var before = babyRow(baby);
+        assertFailure(patchBaby(Long.toString(baby), jwt, "{}", image("image/png", new byte[0]), 400));
+        assertFailure(patchBaby(Long.toString(baby), jwt, "{}", image("text/plain", "text".getBytes()), 400));
+        assertFailure(patchBaby(Long.toString(baby), jwt, "{}", image("image/png", "not-png".getBytes()), 400));
+        assertFailure(patchBaby(Long.toString(baby), jwt, "{}",
+                image("image/png", new byte[BabyImageUpload.MAX_BYTES + 1]), 413));
+        storage.failStore.set(true);
+        JsonNode failure = patchBaby(Long.toString(baby), jwt, "{}", image("image/jpeg", jpeg()), 503);
+        assertFailure(failure);
+        assertThat(failure.path("message").asText()).isEqualTo("아기 프로필 이미지를 처리할 수 없습니다.");
+        assertThat(babyRow(baby)).isEqualTo(before);
+        assertThat(storage.stored).isEmpty();
+    }
+
+    @Test
+    void uploadedImageIsCompensatedIfDatabaseUpdateFails() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        String oldUrl = "https://images.example/babies/profile/old.jpg";
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", oldUrl, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        var before = babyRow(baby);
+        jdbc.execute("CREATE TRIGGER baby04_reject_update BEFORE UPDATE ON baby "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced update failure'");
+        try {
+            assertFailure(patchBaby(Long.toString(baby), token(owner), "{\"babyName\":\"변경\"}",
+                    image("image/jpeg", jpeg()), 500));
+        } finally {
+            jdbc.execute("DROP TRIGGER baby04_reject_update");
+        }
+        assertThat(babyRow(baby)).isEqualTo(before);
+        assertThat(storage.stored).hasSize(1);
+        assertThat(storage.deleted).containsExactly(storage.stored.getFirst());
+        assertThat(storage.deleted).doesNotContain(oldUrl);
+    }
+
+    @Test
+    void authorizationIsRecheckedAfterUploadBeforeDatabaseMutation() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        var before = babyRow(baby);
+        storage.afterStore.set(() -> jdbc.update("UPDATE baby_member SET role = 'CAREGIVER' "
+                + "WHERE baby_id = ? AND member_id = ?", baby, owner));
+        assertFailure(patchBaby(Long.toString(baby), token(owner), "{}", image("image/jpeg", jpeg()), 403));
+        assertThat(babyRow(baby)).isEqualTo(before);
+        assertThat(storage.stored).hasSize(1);
+        assertThat(storage.deleted).containsExactly(storage.stored.getFirst());
+    }
+
+    private JsonNode patchBaby(String babyId, String token, String json,
+                               MockMultipartFile image, int expectedStatus) throws Exception {
+        var request = multipart(HttpMethod.PATCH, "/api/v1/babies/{babyId}", babyId)
+                .file(new MockMultipartFile("request", "request.json", MediaType.APPLICATION_JSON_VALUE,
+                        json.getBytes(StandardCharsets.UTF_8)));
+        if (image != null) {
+            request.file(image);
+        }
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+        String response = mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString();
+        return mapper.readTree(response);
+    }
+
+    private byte[] jpeg() {
+        return new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 0x00};
+    }
+
+    private byte[] png() {
+        return new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+    }
+
+    private java.util.Map<String, Object> babyRow(long babyId) {
+        return jdbc.queryForMap("SELECT created_by_member_id, baby_name, birth_date, gender, profile_image_url, "
+                + "is_deleted, created_at, updated_at, deleted_at FROM baby WHERE baby_id = ?", babyId);
+    }
+
+    private java.util.Map<String, Object> membershipRow(long babyId, long memberId) {
+        return jdbc.queryForMap("SELECT role, status, joined_at, ended_at FROM baby_member "
+                + "WHERE baby_id = ? AND member_id = ?", babyId, memberId);
+    }
+
     private JsonNode detailBaby(String babyId, String token, int expectedStatus) throws Exception {
         var request = get("/api/v1/babies/{babyId}", babyId);
         if (token != null) {
@@ -577,14 +815,18 @@ class BabyMariaDbIntegrationTest {
     static class FakeBabyImageStorage implements BabyProfileImageStoragePort {
         final List<String> stored = new CopyOnWriteArrayList<>();
         final List<String> deleted = new CopyOnWriteArrayList<>();
+        final List<Boolean> deletedDuringTransaction = new CopyOnWriteArrayList<>();
         final AtomicBoolean failStore = new AtomicBoolean();
         final AtomicBoolean failDelete = new AtomicBoolean();
+        final AtomicReference<Runnable> afterStore = new AtomicReference<>();
 
         void reset() {
             stored.clear();
             deleted.clear();
+            deletedDuringTransaction.clear();
             failStore.set(false);
             failDelete.set(false);
+            afterStore.set(null);
         }
 
         @Override
@@ -594,11 +836,16 @@ class BabyMariaDbIntegrationTest {
             }
             String url = "https://images.example/babies/profile/" + UUID.randomUUID() + "." + image.extension();
             stored.add(url);
+            Runnable callback = afterStore.getAndSet(null);
+            if (callback != null) {
+                callback.run();
+            }
             return url;
         }
 
         @Override
         public void deleteOwnedImage(String imageUrl) {
+            deletedDuringTransaction.add(TransactionSynchronizationManager.isActualTransactionActive());
             if (failDelete.getAndSet(false)) {
                 throw new IllegalStateException("cleanup unavailable");
             }

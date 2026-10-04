@@ -79,6 +79,15 @@ class BabyJpaEntity {
         member.assignBaby(this);
     }
 
+    void updateInformation(String newName, LocalDate newBirthDate, BabyGender newGender,
+                           String newProfileImageUrl, Instant now) {
+        name = newName;
+        birthDate = newBirthDate;
+        gender = newGender;
+        profileImageUrl = newProfileImageUrl;
+        updatedAt = now;
+    }
+
     Long id() { return id; }
     Long createdByMemberId() { return createdByMemberId; }
     String name() { return name; }

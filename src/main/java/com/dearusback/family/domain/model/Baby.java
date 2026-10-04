@@ -17,9 +17,9 @@ public record Baby(Long id, Long createdByMemberId, String name, LocalDate birth
         Objects.requireNonNull(createdAt);
         Objects.requireNonNull(updatedAt);
         members = List.copyOf(members);
-        if (members.size() != 1 || members.getFirst().role() != BabyMemberRole.OWNER
+        if (id == null && (members.size() != 1 || members.getFirst().role() != BabyMemberRole.OWNER
                 || members.getFirst().status() != BabyMemberStatus.ACTIVE
-                || !members.getFirst().memberId().equals(createdByMemberId)) {
+                || !members.getFirst().memberId().equals(createdByMemberId))) {
             throw new IllegalArgumentException("A new baby must have one active creator-owner");
         }
     }
@@ -29,5 +29,14 @@ public record Baby(Long id, Long createdByMemberId, String name, LocalDate birth
         return new Baby(null, creatorId, name, birthDate, gender, profileImageUrl,
                 false, now, now, null, List.of(new BabyMember(null, creatorId,
                 BabyMemberRole.OWNER, BabyMemberStatus.ACTIVE, now, null)));
+    }
+
+    public Baby changeInformation(String newName, LocalDate newBirthDate, BabyGender newGender,
+                                  String newProfileImageUrl, Instant now) {
+        if (deleted) {
+            throw new IllegalStateException("Deleted baby cannot be changed");
+        }
+        return new Baby(id, createdByMemberId, newName, newBirthDate, newGender,
+                newProfileImageUrl, deleted, createdAt, now, deletedAt, members);
     }
 }
