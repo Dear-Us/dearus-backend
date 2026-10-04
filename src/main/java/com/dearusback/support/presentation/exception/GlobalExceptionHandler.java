@@ -4,6 +4,7 @@ import com.dearusback.support.application.exception.CommonErrorCode;
 import com.dearusback.support.domain.exception.BusinessException;
 import com.dearusback.support.domain.exception.ErrorType;
 import com.dearusback.support.presentation.response.ApiResponse;
+import org.springframework.beans.TypeMismatchException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -28,7 +29,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class,
-            MissingServletRequestPartException.class})
+            MissingServletRequestPartException.class, TypeMismatchException.class})
     public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(Exception exception) {
         return ResponseEntity
                 .badRequest()

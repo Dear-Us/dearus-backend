@@ -4,6 +4,8 @@ import com.dearusback.support.domain.exception.ErrorCode;
 import com.dearusback.support.domain.exception.ErrorType;
 
 public enum FamilyErrorCode implements ErrorCode {
+    INVALID_BABY_ID("INVALID_BABY_ID", "아기 ID가 올바르지 않습니다.", ErrorType.BAD_REQUEST),
+    BABY_NOT_FOUND("BABY_NOT_FOUND", "아기 정보를 찾을 수 없습니다.", ErrorType.NOT_FOUND),
     INVALID_BABY_NAME("INVALID_BABY_NAME", "아기 이름은 1~50자여야 합니다.", ErrorType.BAD_REQUEST),
     INVALID_BIRTH_DATE("INVALID_BIRTH_DATE", "생년월일이 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     INVALID_GENDER("INVALID_GENDER", "성별이 올바르지 않습니다.", ErrorType.BAD_REQUEST),
