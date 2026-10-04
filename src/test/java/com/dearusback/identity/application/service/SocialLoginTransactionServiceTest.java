@@ -214,6 +214,11 @@ class SocialLoginTransactionServiceTest {
         }
 
         @Override
+        public Member updateLastSelectedBabyId(Member member) {
+            return save(member);
+        }
+
+        @Override
         public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
             throw new UnsupportedOperationException();
         }

@@ -1,20 +1,26 @@
 package com.dearusback.identity.presentation.rest;
 
-import com.dearusback.identity.application.port.in.GetMyProfileQuery;
+import com.dearusback.identity.application.model.ChangeLastSelectedBabyCommand;
 import com.dearusback.identity.application.model.ProfileImageUpload;
 import com.dearusback.identity.application.model.UpdateMyProfileCommand;
+import com.dearusback.identity.application.port.in.ChangeLastSelectedBabyUseCase;
+import com.dearusback.identity.application.port.in.GetMyProfileQuery;
 import com.dearusback.identity.application.port.in.UpdateMyProfileUseCase;
 import com.dearusback.identity.domain.exception.IdentityErrorCode;
 import com.dearusback.identity.domain.exception.IdentityException;
+import com.dearusback.identity.presentation.dto.ChangeLastSelectedBabyRequest;
+import com.dearusback.identity.presentation.dto.LastSelectedBabyResponse;
 import com.dearusback.identity.presentation.dto.MyProfileResponse;
 import com.dearusback.identity.presentation.dto.UpdateMyProfileRequest;
 import com.dearusback.support.presentation.response.ApiResponse;
+import jakarta.validation.Valid;
 import java.io.IOException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,10 +32,13 @@ public class MemberController {
 
     private final GetMyProfileQuery getMyProfileQuery;
     private final UpdateMyProfileUseCase updateMyProfileUseCase;
+    private final ChangeLastSelectedBabyUseCase changeLastSelectedBabyUseCase;
 
-    public MemberController(GetMyProfileQuery getMyProfileQuery, UpdateMyProfileUseCase updateMyProfileUseCase) {
+    public MemberController(GetMyProfileQuery getMyProfileQuery, UpdateMyProfileUseCase updateMyProfileUseCase,
+                            ChangeLastSelectedBabyUseCase changeLastSelectedBabyUseCase) {
         this.getMyProfileQuery = getMyProfileQuery;
         this.updateMyProfileUseCase = updateMyProfileUseCase;
+        this.changeLastSelectedBabyUseCase = changeLastSelectedBabyUseCase;
     }
 
     @GetMapping("/me")
@@ -37,6 +46,16 @@ public class MemberController {
         return ResponseEntity.ok(ApiResponse.success(MyProfileResponse.from(
                 getMyProfileQuery.getMyProfile(memberId)
         )));
+    }
+
+    @PatchMapping(value = "/me/last-selected-baby", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ApiResponse<LastSelectedBabyResponse>> changeLastSelectedBaby(
+            @AuthenticationPrincipal Long memberId,
+            @Valid @RequestBody ChangeLastSelectedBabyRequest request
+    ) {
+        Long selectedBabyId = changeLastSelectedBabyUseCase.change(
+                new ChangeLastSelectedBabyCommand(memberId, request.babyId()));
+        return ResponseEntity.ok(ApiResponse.success(new LastSelectedBabyResponse(selectedBabyId)));
     }
 
     @PatchMapping(value = "/me", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

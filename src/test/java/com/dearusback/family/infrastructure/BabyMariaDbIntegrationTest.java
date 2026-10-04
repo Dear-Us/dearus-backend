@@ -3,6 +3,7 @@ package com.dearusback.family.infrastructure;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.dearusback.DearUsBackApplication;
@@ -615,6 +616,140 @@ class BabyMariaDbIntegrationTest {
         assertThat(babyRow(baby)).isEqualTo(before);
         assertThat(storage.stored).hasSize(1);
         assertThat(storage.deleted).containsExactly(storage.stored.getFirst());
+    }
+
+    @Test
+    void memberCanSelectActiveOwnerAndCaregiverBabiesAndRepeatSameSelection() throws Exception {
+        long currentMember = insertMember("Asia/Seoul", false);
+        long otherMember = insertMember("Asia/Seoul", false);
+        Instant now = Instant.now();
+        long ownerBaby = insertBaby(currentMember, "도윤", "2020-01-01", "MALE", null, false, now);
+        insertMembership(ownerBaby, currentMember, "OWNER", "ACTIVE");
+        long caregiverBaby = insertBaby(otherMember, "서윤", "2021-02-02", "FEMALE", null, false, now);
+        insertMembership(caregiverBaby, otherMember, "OWNER", "ACTIVE");
+        insertMembership(caregiverBaby, currentMember, "CAREGIVER", "ACTIVE");
+        var ownerBefore = babyRow(ownerBaby);
+        var caregiverBefore = babyRow(caregiverBaby);
+        var ownerMembershipBefore = membershipRow(ownerBaby, currentMember);
+        var caregiverMembershipBefore = membershipRow(caregiverBaby, currentMember);
+        String jwt = token(currentMember);
+
+        assertSelectionChanged(changeSelection(jwt, "{\"babyId\":" + ownerBaby + "}", 200), ownerBaby);
+        assertThat(selectedBaby(currentMember)).isEqualTo(ownerBaby);
+        assertSelectionChanged(changeSelection(jwt, "{\"babyId\":" + caregiverBaby + "}", 200), caregiverBaby);
+        assertThat(selectedBaby(currentMember)).isEqualTo(caregiverBaby);
+        assertSelectionChanged(changeSelection(jwt, "{\"babyId\":" + caregiverBaby + "}", 200), caregiverBaby);
+        assertThat(selectedBaby(currentMember)).isEqualTo(caregiverBaby);
+        assertThat(myProfile(jwt).path("data").path("lastSelectedBabyId").asLong()).isEqualTo(caregiverBaby);
+
+        assertThat(selectedBaby(otherMember)).isNull();
+        assertThat(babyRow(ownerBaby)).isEqualTo(ownerBefore);
+        assertThat(babyRow(caregiverBaby)).isEqualTo(caregiverBefore);
+        assertThat(membershipRow(ownerBaby, currentMember)).isEqualTo(ownerMembershipBefore);
+        assertThat(membershipRow(caregiverBaby, currentMember)).isEqualTo(caregiverMembershipBefore);
+    }
+
+    @Test
+    void memberSelectionHidesInaccessibleBabiesWithIdentical404AndKeepsPreviousChoice() throws Exception {
+        long currentMember = insertMember("Asia/Seoul", false);
+        long otherMember = insertMember("Asia/Seoul", false);
+        Instant now = Instant.now();
+        long selected = insertBaby(currentMember, "선택됨", "2020-01-01", "MALE", null, false, now);
+        insertMembership(selected, currentMember, "OWNER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", selected, currentMember);
+        long deleted = insertBaby(currentMember, "삭제", "2020-01-01", "MALE", null, true, now);
+        insertMembership(deleted, currentMember, "OWNER", "ACTIVE");
+        long noMembership = insertBaby(currentMember, "관계없음", "2020-01-01", "MALE", null, false, now);
+        long left = insertBaby(currentMember, "나감", "2020-01-01", "MALE", null, false, now);
+        insertMembership(left, currentMember, "OWNER", "LEFT");
+        long removed = insertBaby(currentMember, "제외", "2020-01-01", "MALE", null, false, now);
+        insertMembership(removed, currentMember, "OWNER", "REMOVED");
+        long otherBaby = insertBaby(otherMember, "다른회원", "2020-01-01", "MALE", null, false, now);
+        insertMembership(otherBaby, otherMember, "OWNER", "ACTIVE");
+        var selectedBabyBefore = babyRow(selected);
+        var selectedMembershipBefore = membershipRow(selected, currentMember);
+
+        for (long inaccessible : new long[]{Long.MAX_VALUE, deleted, noMembership, left, removed, otherBaby}) {
+            JsonNode response = changeSelection(token(currentMember), "{\"babyId\":" + inaccessible + "}", 404);
+            assertFailure(response);
+            assertThat(response.path("message").asText()).isEqualTo("아기 정보를 찾을 수 없습니다.");
+            assertThat(selectedBaby(currentMember)).isEqualTo(selected);
+        }
+        assertThat(babyRow(selected)).isEqualTo(selectedBabyBefore);
+        assertThat(membershipRow(selected, currentMember)).isEqualTo(selectedMembershipBefore);
+        assertThat(selectedBaby(otherMember)).isNull();
+    }
+
+    @Test
+    void memberSelectionRejectsMissingNonPositiveAndMalformedIds() throws Exception {
+        long memberId = insertMember("Asia/Seoul", false);
+        String jwt = token(memberId);
+        for (String json : List.of("{}", "{\"babyId\":null}", "{\"babyId\":0}",
+                "{\"babyId\":-1}", "{invalid", "{\"babyId\":\"not-a-number\"}")) {
+            assertFailure(changeSelection(jwt, json, 400));
+        }
+        assertThat(selectedBaby(memberId)).isNull();
+    }
+
+    @Test
+    void memberSelectionRequiresAuthenticationAndActiveMember() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        String json = "{\"babyId\":" + baby + "}";
+        assertFailure(changeSelection(null, json, 401));
+        assertFailure(changeSelection("invalid.jwt", json, 401));
+        assertFailure(changeSelection(token(Long.MAX_VALUE), json, 401));
+        assertFailure(changeSelection(token(insertMember("Asia/Seoul", true)), json, 403));
+        assertThat(selectedBaby(owner)).isNull();
+    }
+
+    @Test
+    void memberSelectionRollsBackWhenMemberUpdateFails() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        var babyBefore = babyRow(baby);
+        var membershipBefore = membershipRow(baby, owner);
+        jdbc.execute("CREATE TRIGGER member03_reject_update BEFORE UPDATE ON member "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced selection failure'");
+        try {
+            assertFailure(changeSelection(token(owner), "{\"babyId\":" + baby + "}", 500));
+        } finally {
+            jdbc.execute("DROP TRIGGER member03_reject_update");
+        }
+        assertThat(selectedBaby(owner)).isNull();
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(membershipRow(baby, owner)).isEqualTo(membershipBefore);
+    }
+
+    private JsonNode changeSelection(String jwt, String json, int expectedStatus) throws Exception {
+        var request = patch("/api/v1/members/me/last-selected-baby")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        String response = mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString();
+        return mapper.readTree(response);
+    }
+
+    private JsonNode myProfile(String jwt) throws Exception {
+        String response = mvc.perform(get("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + jwt))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return mapper.readTree(response);
+    }
+
+    private void assertSelectionChanged(JsonNode response, long expectedBabyId) {
+        assertThat(response.size()).isEqualTo(3);
+        assertThat(response.path("success").asBoolean()).isTrue();
+        assertThat(response.path("message").isNull()).isTrue();
+        assertThat(response.has("errorCode")).isFalse();
+        assertThat(response.path("data").size()).isEqualTo(1);
+        assertThat(response.path("data").path("lastSelectedBabyId").asLong()).isEqualTo(expectedBabyId);
     }
 
     private JsonNode patchBaby(String babyId, String token, String json,

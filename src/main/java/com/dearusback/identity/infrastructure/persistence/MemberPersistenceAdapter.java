@@ -52,6 +52,15 @@ public class MemberPersistenceAdapter implements MemberRepository {
     }
 
     @Override
+    public Member updateLastSelectedBabyId(Member member) {
+        MemberJpaEntity entity = repository.findById(member.id())
+                .orElseThrow(() -> new IllegalStateException("Member disappeared during baby selection"));
+        entity.updateLastSelectedBabyId(member.lastSelectedBabyId());
+        repository.flush();
+        return MemberMapper.toDomain(entity);
+    }
+
+    @Override
     public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
         return repository.initializeLastSelectedBabyId(memberId, babyId);
     }

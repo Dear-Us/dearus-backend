@@ -16,5 +16,7 @@ public interface MemberRepository {
 
     Member updateProfile(Member member);
 
+    Member updateLastSelectedBabyId(Member member);
+
     int initializeLastSelectedBabyId(Long memberId, Long babyId);
 }

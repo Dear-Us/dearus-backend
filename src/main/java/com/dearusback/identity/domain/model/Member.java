@@ -77,6 +77,13 @@ public final class Member {
         return copy(name, null);
     }
 
+    public Member changeLastSelectedBabyId(Long babyId) {
+        if (babyId == null || babyId <= 0) {
+            throw new IdentityException(IdentityErrorCode.INVALID_LAST_SELECTED_BABY_ID);
+        }
+        return new Member(id, name, email, timezone, profileImageUrl, babyId, deleted, socialAccounts);
+    }
+
     public static String normalizeName(String value) {
         if (value == null) {
             throw new IdentityException(IdentityErrorCode.INVALID_MEMBER_NAME);

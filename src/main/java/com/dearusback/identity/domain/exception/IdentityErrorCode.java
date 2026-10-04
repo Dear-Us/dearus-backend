@@ -39,6 +39,16 @@ public enum IdentityErrorCode implements ErrorCode {
             "인증 정보가 유효하지 않습니다.",
             ErrorType.UNAUTHORIZED
     ),
+    ACCESSIBLE_BABY_NOT_FOUND(
+            "ACCESSIBLE_BABY_NOT_FOUND",
+            "아기 정보를 찾을 수 없습니다.",
+            ErrorType.NOT_FOUND
+    ),
+    INVALID_LAST_SELECTED_BABY_ID(
+            "INVALID_LAST_SELECTED_BABY_ID",
+            "아기 ID가 올바르지 않습니다.",
+            ErrorType.BAD_REQUEST
+    ),
     INVALID_PROFILE_UPDATE(
             "INVALID_PROFILE_UPDATE",
             "수정할 회원 정보가 올바르지 않습니다.",

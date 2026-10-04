@@ -85,6 +85,10 @@ class MemberJpaEntity {
         this.profileImageUrl = newProfileImageUrl;
     }
 
+    void updateLastSelectedBabyId(Long babyId) {
+        lastSelectedBabyId = babyId;
+    }
+
     @PrePersist
     void prePersist() {
         Instant now = Instant.now();
