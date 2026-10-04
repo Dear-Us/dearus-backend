@@ -3,10 +3,13 @@ package com.dearusback.identity.presentation.rest;
 import com.dearusback.identity.application.model.SocialLoginCommand;
 import com.dearusback.identity.application.model.SocialLoginResult;
 import com.dearusback.identity.application.model.ReissueTokenCommand;
-import com.dearusback.identity.application.port.in.ReissueTokenUseCase;
+import com.dearusback.identity.application.model.LogoutCommand;
+import com.dearusback.identity.application.port.in.LogoutUseCase;
 import com.dearusback.identity.application.port.in.SocialLoginUseCase;
+import com.dearusback.identity.application.port.in.ReissueTokenUseCase;
 import com.dearusback.identity.domain.type.SocialProvider;
 import com.dearusback.identity.presentation.dto.ReissueTokenRequest;
+import com.dearusback.identity.presentation.dto.LogoutRequest;
 import com.dearusback.identity.presentation.dto.ReissueTokenResponse;
 import com.dearusback.identity.presentation.dto.SocialLoginRequest;
 import com.dearusback.identity.presentation.dto.SocialLoginResponse;
@@ -24,10 +27,16 @@ public class AuthController {
 
     private final SocialLoginUseCase socialLoginUseCase;
     private final ReissueTokenUseCase reissueTokenUseCase;
+    private final LogoutUseCase logoutUseCase;
 
-    public AuthController(SocialLoginUseCase socialLoginUseCase, ReissueTokenUseCase reissueTokenUseCase) {
+    public AuthController(
+            SocialLoginUseCase socialLoginUseCase,
+            ReissueTokenUseCase reissueTokenUseCase,
+            LogoutUseCase logoutUseCase
+    ) {
         this.socialLoginUseCase = socialLoginUseCase;
         this.reissueTokenUseCase = reissueTokenUseCase;
+        this.logoutUseCase = logoutUseCase;
     }
 
     @PostMapping("/login")
@@ -49,5 +58,11 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(
                 ReissueTokenResponse.from(reissueTokenUseCase.reissue(new ReissueTokenCommand(request.refreshToken())))
         ));
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<ApiResponse<Void>> logout(@Valid @RequestBody LogoutRequest request) {
+        logoutUseCase.logout(new LogoutCommand(request.refreshToken()));
+        return ResponseEntity.ok(ApiResponse.successWithoutData());
     }
 }

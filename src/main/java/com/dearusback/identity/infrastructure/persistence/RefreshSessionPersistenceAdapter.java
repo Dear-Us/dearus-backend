@@ -5,6 +5,7 @@ import com.dearusback.identity.domain.model.RefreshSession;
 import java.time.Instant;
 import java.util.Optional;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class RefreshSessionPersistenceAdapter implements RefreshSessionRepository {
@@ -26,6 +27,12 @@ public class RefreshSessionPersistenceAdapter implements RefreshSessionRepositor
     @Override
     public boolean revokeIfActive(Long sessionId, Instant now) {
         return repository.revokeIfActive(sessionId, now) == 1;
+    }
+
+    @Override
+    @Transactional
+    public boolean revokeByTokenHash(String tokenHash, Instant revokedAt) {
+        return repository.revokeByTokenHash(tokenHash, revokedAt) == 1;
     }
 
     @Override

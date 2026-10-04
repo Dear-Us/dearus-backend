@@ -235,6 +235,11 @@ class SocialLoginTransactionServiceTest {
         }
 
         @Override
+        public boolean revokeByTokenHash(String tokenHash, Instant revokedAt) {
+            return false;
+        }
+
+        @Override
         public void save(Long memberId, String tokenHash, Instant expiresAt, Instant createdAt) {
             sessions.add(new CapturedRefreshSession(memberId, tokenHash, expiresAt, createdAt));
         }

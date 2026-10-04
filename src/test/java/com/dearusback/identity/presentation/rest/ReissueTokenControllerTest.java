@@ -63,7 +63,7 @@ class ReissueTokenControllerTest {
     }
 
     private MockMvc mvc(ReissueTokenUseCase useCase) {
-        return MockMvcBuilders.standaloneSetup(new AuthController(command -> null, useCase))
+        return MockMvcBuilders.standaloneSetup(new AuthController(command -> null, useCase, command -> {}))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

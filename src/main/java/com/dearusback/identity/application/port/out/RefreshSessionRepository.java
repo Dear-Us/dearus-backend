@@ -10,5 +10,7 @@ public interface RefreshSessionRepository {
 
     boolean revokeIfActive(Long sessionId, Instant now);
 
+    boolean revokeByTokenHash(String tokenHash, Instant revokedAt);
+
     void save(Long memberId, String tokenHash, Instant expiresAt, Instant createdAt);
 }

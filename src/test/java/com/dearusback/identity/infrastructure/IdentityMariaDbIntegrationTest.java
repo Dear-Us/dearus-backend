@@ -8,12 +8,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.dearusback.DearUsBackApplication;
 import com.dearusback.identity.application.model.ReissueTokenCommand;
+import com.dearusback.identity.application.model.LogoutCommand;
 import com.dearusback.identity.application.model.ReissueTokenResult;
 import com.dearusback.identity.application.model.SocialLoginResult;
 import com.dearusback.identity.application.model.VerifiedSocialIdentity;
 import com.dearusback.identity.application.port.out.RefreshTokenGenerator;
 import com.dearusback.identity.application.port.out.RefreshTokenHasher;
 import com.dearusback.identity.application.service.ReissueTokenService;
+import com.dearusback.identity.application.service.LogoutService;
 import com.dearusback.identity.application.service.SocialLoginTransactionService;
 import com.dearusback.identity.domain.exception.IdentityErrorCode;
 import com.dearusback.identity.domain.type.SocialProvider;
@@ -75,6 +77,9 @@ class IdentityMariaDbIntegrationTest {
 
     @Autowired
     private ReissueTokenService reissue;
+
+    @Autowired
+    private LogoutService logout;
 
     @Autowired
     private RefreshTokenHasher hasher;
@@ -243,6 +248,132 @@ class IdentityMariaDbIntegrationTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    @Test
+    void logoutRevokesOnlyTheRequestedSessionAndOtherSessionCanReissue() {
+        VerifiedSocialIdentity identity = identity();
+        SocialLoginResult first = login.loginOrRegister(identity);
+        SocialLoginResult second = login.loginOrRegister(identity);
+
+        assertThat(first.member().memberId()).isEqualTo(second.member().memberId());
+        logout.logout(new LogoutCommand(first.refreshToken()));
+
+        assertThat(revokedAt(first.refreshToken())).isNotNull();
+        assertThat(revokedAt(second.refreshToken())).isNull();
+        assertInvalid(first.refreshToken());
+        assertThat(reissue.reissue(new ReissueTokenCommand(second.refreshToken())).refreshToken())
+                .isNotBlank();
+    }
+
+    @Test
+    void repeatedUnknownExpiredAndAlreadyRevokedLogoutAlwaysSucceeds() throws Exception {
+        SocialLoginResult original = register();
+        logout.logout(new LogoutCommand(original.refreshToken()));
+        Instant firstRevokedAt = revokedAt(original.refreshToken());
+        logout.logout(new LogoutCommand(original.refreshToken()));
+        assertThat(revokedAt(original.refreshToken())).isEqualTo(firstRevokedAt);
+
+        assertThat(logoutHttp("unknown-" + UUID.randomUUID(), null))
+                .isEqualTo("{\"success\":true,\"data\":null,\"message\":null}");
+
+        SocialLoginResult expired = register();
+        jdbc.update("UPDATE refresh_token SET expires_at = DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 1 DAY) WHERE token_hash = ?",
+                hasher.hash(expired.refreshToken()));
+        assertThat(logoutHttp(expired.refreshToken(), null))
+                .isEqualTo("{\"success\":true,\"data\":null,\"message\":null}");
+        assertThat(revokedAt(expired.refreshToken())).isNotNull();
+    }
+
+    @Test
+    void withdrawnMemberCanLogoutWithoutMemberLookup() throws Exception {
+        SocialLoginResult original = register();
+        jdbc.update("UPDATE member SET is_deleted = true WHERE member_id = ?", original.member().memberId());
+
+        assertThat(logoutHttp(original.refreshToken(), null))
+                .isEqualTo("{\"success\":true,\"data\":null,\"message\":null}");
+
+        assertThat(revokedAt(original.refreshToken())).isNotNull();
+    }
+
+    @Test
+    void logoutHttpContractIsIdenticalForPresentAndUnknownTokens() throws Exception {
+        SocialLoginResult original = register();
+        String unknown = "unknown-" + UUID.randomUUID();
+
+        String first = logoutHttp(original.refreshToken(), null);
+        String repeated = logoutHttp(original.refreshToken(), "Bearer expired.access.token");
+        String absent = logoutHttp(unknown, null);
+
+        assertThat(first).isEqualTo("{\"success\":true,\"data\":null,\"message\":null}");
+        assertThat(repeated).isEqualTo(first);
+        assertThat(absent).isEqualTo(first);
+        assertThat(revokedAt(original.refreshToken())).isNotNull();
+
+        mvc.perform(post("/api/v1/auth/reissue")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"" + original.refreshToken() + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value(IdentityErrorCode.INVALID_REFRESH_TOKEN.message()));
+    }
+
+    @Test
+    void concurrentLogoutRequestsAllSucceedAndDoNotStoreRawToken() throws Exception {
+        SocialLoginResult original = register();
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<String>> calls = new ArrayList<>();
+        try (ExecutorService executor = Executors.newFixedThreadPool(4)) {
+            for (int i = 0; i < 4; i++) {
+                calls.add(executor.submit(() -> {
+                    start.await();
+                    return logoutHttp(original.refreshToken(), null);
+                }));
+            }
+            start.countDown();
+            for (Future<String> call : calls) {
+                assertThat(call.get(20, TimeUnit.SECONDS))
+                        .isEqualTo("{\"success\":true,\"data\":null,\"message\":null}");
+            }
+        }
+        assertThat(revokedAt(original.refreshToken())).isNotNull();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM refresh_token WHERE token_hash = ?",
+                Integer.class, original.refreshToken())).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM refresh_token WHERE token_hash = ?",
+                Integer.class, hasher.hash(original.refreshToken()))).isOne();
+    }
+
+    @Test
+    void logoutAndReissueRaceCanOnlyConsumeOldTokenOnce() throws Exception {
+        SocialLoginResult original = register();
+        CountDownLatch start = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<Object> reissueCall = executor.submit(() -> {
+                start.await();
+                try {
+                    return reissue.reissue(new ReissueTokenCommand(original.refreshToken()));
+                } catch (BusinessException error) {
+                    return error;
+                }
+            });
+            Future<?> logoutCall = executor.submit(() -> {
+                start.await();
+                logout.logout(new LogoutCommand(original.refreshToken()));
+                return null;
+            });
+            start.countDown();
+            Object reissueResult = reissueCall.get(20, TimeUnit.SECONDS);
+            logoutCall.get(20, TimeUnit.SECONDS);
+
+            assertThat(reissueResult).isInstanceOfAny(ReissueTokenResult.class, BusinessException.class);
+            if (reissueResult instanceof BusinessException error) {
+                assertThat(error.errorCode()).isEqualTo(IdentityErrorCode.INVALID_REFRESH_TOKEN);
+            }
+            assertThat(revokedAt(original.refreshToken())).isNotNull();
+            assertInvalid(original.refreshToken());
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM refresh_token WHERE member_id = ?",
+                    Integer.class, original.member().memberId()))
+                    .isEqualTo(reissueResult instanceof ReissueTokenResult ? 2 : 1);
+        }
+    }
+
     private SocialLoginResult register() {
         return login.loginOrRegister(identity());
     }
@@ -255,6 +386,18 @@ class IdentityMariaDbIntegrationTest {
                 "사용자",
                 null
         );
+    }
+
+    private String logoutHttp(String rawToken, String authorization) throws Exception {
+        var request = post("/api/v1/auth/logout")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"refreshToken\":\"" + rawToken + "\"}");
+        if (authorization != null) {
+            request.header("Authorization", authorization);
+        }
+        return mvc.perform(request)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
     }
 
     private Instant revokedAt(String rawToken) {
