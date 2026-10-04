@@ -61,12 +61,22 @@ class GetMyProfileServiceTest {
             }
 
             @Override
+            public Optional<Member> findByIdForUpdate(Long memberId) {
+                return member;
+            }
+
+            @Override
             public Optional<Member> findBySocialAccount(SocialProvider provider, String providerUserId) {
                 throw new UnsupportedOperationException();
             }
 
             @Override
             public Member save(Member member) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Member updateProfile(Member member) {
                 throw new UnsupportedOperationException();
             }
         };

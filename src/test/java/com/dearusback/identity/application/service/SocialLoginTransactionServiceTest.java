@@ -191,6 +191,11 @@ class SocialLoginTransactionServiceTest {
         }
 
         @Override
+        public Optional<Member> findByIdForUpdate(Long memberId) {
+            return findById(memberId);
+        }
+
+        @Override
         public Optional<Member> findBySocialAccount(SocialProvider provider, String providerUserId) {
             return Optional.ofNullable(members.get(key(provider, providerUserId)));
         }
@@ -201,6 +206,11 @@ class SocialLoginTransactionServiceTest {
             SocialAccount account = saved.socialAccounts().getFirst();
             members.put(key(account.provider(), account.providerUserId()), saved);
             return saved;
+        }
+
+        @Override
+        public Member updateProfile(Member member) {
+            return save(member);
         }
 
         void seed(Member member) {

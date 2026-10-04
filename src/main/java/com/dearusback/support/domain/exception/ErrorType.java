@@ -5,6 +5,7 @@ package com.dearusback.support.domain.exception;
  */
 public enum ErrorType {
     BAD_REQUEST,
+    PAYLOAD_TOO_LARGE,
     UNAUTHORIZED,
     FORBIDDEN,
     NOT_FOUND,

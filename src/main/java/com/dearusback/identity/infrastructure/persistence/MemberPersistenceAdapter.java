@@ -23,6 +23,11 @@ public class MemberPersistenceAdapter implements MemberRepository {
     }
 
     @Override
+    public Optional<Member> findByIdForUpdate(Long memberId) {
+        return repository.findByIdForUpdate(memberId).map(MemberMapper::toDomain);
+    }
+
+    @Override
     public Optional<Member> findBySocialAccount(SocialProvider provider, String providerUserId) {
         return repository.findBySocialAccount(provider, providerUserId).map(MemberMapper::toDomain);
     }
@@ -35,5 +40,14 @@ public class MemberPersistenceAdapter implements MemberRepository {
         } catch (DataIntegrityViolationException exception) {
             throw new SocialAccountConflictException();
         }
+    }
+
+    @Override
+    public Member updateProfile(Member member) {
+        MemberJpaEntity entity = repository.findById(member.id())
+                .orElseThrow(() -> new IllegalStateException("Member disappeared during profile update"));
+        entity.updateProfile(member.name(), member.profileImageUrl());
+        repository.flush();
+        return MemberMapper.toDomain(entity);
     }
 }

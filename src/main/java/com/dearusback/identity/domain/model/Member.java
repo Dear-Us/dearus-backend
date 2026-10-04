@@ -1,5 +1,7 @@
 package com.dearusback.identity.domain.model;
 
+import com.dearusback.identity.domain.exception.IdentityErrorCode;
+import com.dearusback.identity.domain.exception.IdentityException;
 import java.util.List;
 import java.util.Objects;
 
@@ -61,6 +63,34 @@ public final class Member {
                 .filter(account -> account.providerUserId().equals(providerUserId))
                 .findFirst()
                 .ifPresent(account -> account.updateProviderEmail(providerEmail));
+    }
+
+    public Member changeName(String newName) {
+        return copy(normalizeName(newName), profileImageUrl);
+    }
+
+    public Member changeProfileImage(String newImageUrl) {
+        return copy(name, requireText(newImageUrl, "profileImageUrl"));
+    }
+
+    public Member removeProfileImage() {
+        return copy(name, null);
+    }
+
+    public static String normalizeName(String value) {
+        if (value == null) {
+            throw new IdentityException(IdentityErrorCode.INVALID_MEMBER_NAME);
+        }
+        String trimmed = value.trim();
+        if (trimmed.isBlank() || trimmed.codePointCount(0, trimmed.length()) > 50) {
+            throw new IdentityException(IdentityErrorCode.INVALID_MEMBER_NAME);
+        }
+        return trimmed;
+    }
+
+    private Member copy(String newName, String newProfileImageUrl) {
+        return new Member(id, newName, email, timezone, newProfileImageUrl,
+                lastSelectedBabyId, deleted, socialAccounts);
     }
 
     public Long id() {

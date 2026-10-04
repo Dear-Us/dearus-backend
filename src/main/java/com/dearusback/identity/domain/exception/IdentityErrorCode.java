@@ -38,6 +38,31 @@ public enum IdentityErrorCode implements ErrorCode {
             "INVALID_AUTHENTICATION",
             "인증 정보가 유효하지 않습니다.",
             ErrorType.UNAUTHORIZED
+    ),
+    INVALID_PROFILE_UPDATE(
+            "INVALID_PROFILE_UPDATE",
+            "수정할 회원 정보가 올바르지 않습니다.",
+            ErrorType.BAD_REQUEST
+    ),
+    INVALID_MEMBER_NAME(
+            "INVALID_MEMBER_NAME",
+            "회원 이름은 1~50자여야 합니다.",
+            ErrorType.BAD_REQUEST
+    ),
+    INVALID_PROFILE_IMAGE(
+            "INVALID_PROFILE_IMAGE",
+            "지원하지 않는 프로필 이미지입니다.",
+            ErrorType.BAD_REQUEST
+    ),
+    PROFILE_IMAGE_TOO_LARGE(
+            "PROFILE_IMAGE_TOO_LARGE",
+            "프로필 이미지는 5MB 이하여야 합니다.",
+            ErrorType.PAYLOAD_TOO_LARGE
+    ),
+    PROFILE_IMAGE_STORAGE_UNAVAILABLE(
+            "PROFILE_IMAGE_STORAGE_UNAVAILABLE",
+            "프로필 이미지를 처리할 수 없습니다.",
+            ErrorType.SERVICE_UNAVAILABLE
     );
 
     private final String code;

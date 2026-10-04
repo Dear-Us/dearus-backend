@@ -80,6 +80,11 @@ class MemberJpaEntity {
         socialAccount.assignMember(this);
     }
 
+    void updateProfile(String newName, String newProfileImageUrl) {
+        this.name = newName;
+        this.profileImageUrl = newProfileImageUrl;
+    }
+
     @PrePersist
     void prePersist() {
         Instant now = Instant.now();

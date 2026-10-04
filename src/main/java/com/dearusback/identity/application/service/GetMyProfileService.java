@@ -1,7 +1,6 @@
 package com.dearusback.identity.application.service;
 
 import com.dearusback.identity.application.model.MyProfileResult;
-import com.dearusback.identity.application.model.MyProfileResult.SocialAccountResult;
 import com.dearusback.identity.application.port.in.GetMyProfileQuery;
 import com.dearusback.identity.domain.exception.IdentityErrorCode;
 import com.dearusback.identity.domain.exception.IdentityException;
@@ -27,16 +26,6 @@ public class GetMyProfileService implements GetMyProfileQuery {
         if (member.isDeleted()) {
             throw new IdentityException(IdentityErrorCode.WITHDRAWN_MEMBER);
         }
-        return new MyProfileResult(
-                member.id(),
-                member.email(),
-                member.name(),
-                member.profileImageUrl(),
-                member.timezone(),
-                member.lastSelectedBabyId(),
-                member.socialAccounts().stream()
-                        .map(account -> new SocialAccountResult(account.provider(), account.providerEmail()))
-                        .toList()
-        );
+        return MyProfileResult.from(member);
     }
 }

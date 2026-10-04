@@ -5,6 +5,7 @@ import com.dearusback.support.domain.exception.ErrorType;
 
 public enum CommonErrorCode implements ErrorCode {
     INVALID_REQUEST("INVALID_REQUEST", "잘못된 요청입니다.", ErrorType.BAD_REQUEST),
+    PAYLOAD_TOO_LARGE("PAYLOAD_TOO_LARGE", "요청 파일 크기가 허용 범위를 초과했습니다.", ErrorType.PAYLOAD_TOO_LARGE),
     INTERNAL_SERVER_ERROR(
             "INTERNAL_SERVER_ERROR",
             "서버 내부 오류가 발생했습니다.",

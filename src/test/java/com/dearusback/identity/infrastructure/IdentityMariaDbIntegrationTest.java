@@ -3,6 +3,7 @@ package com.dearusback.identity.infrastructure;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,9 +13,12 @@ import com.dearusback.identity.application.model.ReissueTokenCommand;
 import com.dearusback.identity.application.model.LogoutCommand;
 import com.dearusback.identity.application.model.ReissueTokenResult;
 import com.dearusback.identity.application.model.SocialLoginResult;
+import com.dearusback.identity.application.model.ProfileImageUpload;
+import com.dearusback.identity.application.model.StoredProfileImage;
 import com.dearusback.identity.application.model.VerifiedSocialIdentity;
 import com.dearusback.identity.application.port.out.RefreshTokenGenerator;
 import com.dearusback.identity.application.port.out.RefreshTokenHasher;
+import com.dearusback.identity.application.port.out.ProfileImageStoragePort;
 import com.dearusback.identity.application.service.ReissueTokenService;
 import com.dearusback.identity.application.service.LogoutService;
 import com.dearusback.identity.application.service.SocialLoginTransactionService;
@@ -29,6 +33,7 @@ import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -36,6 +41,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
@@ -49,6 +55,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpMethod;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
@@ -61,6 +68,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockMultipartFile;
 import org.testcontainers.mariadb.MariaDBContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -108,6 +116,9 @@ class IdentityMariaDbIntegrationTest {
 
     @Autowired
     private AuthProperties authProperties;
+
+    @Autowired
+    private FakeProfileImageStorage profileImages;
 
     @Test
     void v1MemberReceivesDefaultTimezoneAfterV2Migration() throws Exception {
@@ -537,6 +548,189 @@ class IdentityMariaDbIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void member02NamePatchPersistsAndMember01ReturnsDatabaseTimezone() throws Exception {
+        SocialLoginResult account = register();
+        Long memberId = account.member().memberId();
+        jdbc.update("UPDATE member SET timezone = ?, profile_image_url = ? WHERE member_id = ?",
+                "Europe/Paris", "https://provider.example/avatar.png", memberId);
+
+        mvc.perform(profilePatch("{\"memberName\":\"  새 이름  \",\"removeProfileImage\":false}", null)
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.memberName").value("새 이름"))
+                .andExpect(jsonPath("$.data.profileImageUrl").value("https://provider.example/avatar.png"))
+                .andExpect(jsonPath("$.data.timezone").value("Europe/Paris"))
+                .andExpect(jsonPath("$.errorCode").doesNotExist());
+
+        assertThat(jdbc.queryForObject("SELECT member_name FROM member WHERE member_id = ?", String.class, memberId))
+                .isEqualTo("새 이름");
+        mvc.perform(get("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.memberName").value("새 이름"))
+                .andExpect(jsonPath("$.data.timezone").value("Europe/Paris"));
+    }
+
+    @Test
+    void member02ImagePatchPersistsAndNeverDeletesProviderUrl() throws Exception {
+        SocialLoginResult account = register();
+        Long memberId = account.member().memberId();
+        String providerUrl = "https://provider.example/avatar.png";
+        jdbc.update("UPDATE member SET profile_image_url = ? WHERE member_id = ?", providerUrl, memberId);
+
+        String response = mvc.perform(profilePatch("{\"removeProfileImage\":false}", png())
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.profileImageUrl").value(
+                        "https://images.example/members/" + memberId + "/profile/test.png"))
+                .andExpect(jsonPath("$.data.socialAccounts[0].provider").value("GOOGLE"))
+                .andExpect(jsonPath("$.errorCode").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(response).doesNotContain("providerUserId", "socialAccountId");
+
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM member WHERE member_id = ?",
+                String.class, memberId)).isEqualTo(
+                "https://images.example/members/" + memberId + "/profile/test.png");
+        assertThat(profileImages.deleted).doesNotContain(providerUrl);
+        mvc.perform(get("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                .andExpect(jsonPath("$.data.profileImageUrl").value(
+                        "https://images.example/members/" + memberId + "/profile/test.png"));
+    }
+
+    @Test
+    void member02RemoveImageClearsDbAndDeletesOnlyOwnedUrl() throws Exception {
+        SocialLoginResult account = register();
+        Long memberId = account.member().memberId();
+        String oldUrl = "https://images.example/members/" + memberId + "/profile/old.png";
+        jdbc.update("UPDATE member SET profile_image_url = ? WHERE member_id = ?", oldUrl, memberId);
+
+        mvc.perform(profilePatch("{\"removeProfileImage\":true}", null)
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.profileImageUrl").isEmpty());
+
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM member WHERE member_id = ?",
+                String.class, memberId)).isNull();
+        assertThat(profileImages.deleted).contains(oldUrl);
+    }
+
+    @Test
+    void member02RemovingProviderImageDoesNotDeleteExternalObject() throws Exception {
+        SocialLoginResult account = register();
+        Long memberId = account.member().memberId();
+        String providerUrl = "https://provider.example/" + UUID.randomUUID() + "/avatar.png";
+        jdbc.update("UPDATE member SET profile_image_url = ? WHERE member_id = ?", providerUrl, memberId);
+
+        mvc.perform(profilePatch("{\"removeProfileImage\":true}", null)
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.profileImageUrl").isEmpty());
+
+        assertThat(profileImages.deleted).doesNotContain(providerUrl);
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM member WHERE member_id = ?",
+                String.class, memberId)).isNull();
+    }
+
+    @Test
+    void member02RejectsInvalidMultipartAndKeepsDatabaseUnchanged() throws Exception {
+        SocialLoginResult account = register();
+        Long memberId = account.member().memberId();
+        String bearer = "Bearer " + account.accessToken();
+
+        mvc.perform(profilePatch("{\"memberName\":null,\"removeProfileImage\":false}", null)
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").doesNotExist());
+        mvc.perform(profilePatch("{\"removeProfileImage\":true}", png())
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest());
+        mvc.perform(profilePatch("{\"memberName\":\"   \"}", null)
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest());
+        mvc.perform(profilePatch("{\"memberName\":\"" + "x".repeat(51) + "\"}", null)
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest());
+        mvc.perform(profilePatch("{\"memberName\":\"x\"}",
+                        new MockMultipartFile("profileImage", "fake.png", "image/png", "not-png".getBytes()))
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest());
+        mvc.perform(profilePatch("{}", new MockMultipartFile("profileImage", "empty.png", "image/png", new byte[0]))
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest());
+        mvc.perform(profilePatch("{}", new MockMultipartFile("profileImage", "image.gif", "image/gif",
+                        new byte[] {'G', 'I', 'F'}))
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest());
+        mvc.perform(profilePatch("{}", new MockMultipartFile("profileImage", "huge.png", "image/png",
+                        new byte[ProfileImageUpload.MAX_BYTES + 1]))
+                        .header("Authorization", bearer))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.errorCode").doesNotExist());
+        mvc.perform(multipart(HttpMethod.PATCH, "/api/v1/members/me")
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest());
+
+        assertThat(jdbc.queryForObject("SELECT member_name FROM member WHERE member_id = ?", String.class, memberId))
+                .isEqualTo("사용자");
+    }
+
+    @Test
+    void member02StorageFailureIsUnavailableAndDoesNotChangeMember() throws Exception {
+        SocialLoginResult account = register();
+        Long memberId = account.member().memberId();
+        profileImages.failNextStore.set(true);
+
+        mvc.perform(profilePatch("{\"memberName\":\"변경 시도\"}", png())
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message").value("프로필 이미지를 처리할 수 없습니다."))
+                .andExpect(jsonPath("$.errorCode").doesNotExist());
+
+        assertThat(jdbc.queryForObject("SELECT member_name FROM member WHERE member_id = ?", String.class, memberId))
+                .isEqualTo("사용자");
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM member WHERE member_id = ?",
+                String.class, memberId)).isNull();
+    }
+
+    @Test
+    void member02RequiresValidJwtAndExistingActiveMember() throws Exception {
+        SocialLoginResult account = register();
+        mvc.perform(profilePatch("{\"memberName\":\"새 이름\"}", null))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(profilePatch("{\"memberName\":\"새 이름\"}", null)
+                        .header("Authorization", "Bearer invalid.jwt.token"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(profilePatch("{\"memberName\":\"새 이름\"}", null)
+                        .header("Authorization", "Bearer " + signedToken(
+                                "9223372036854775807", "dearus", Instant.now().plusSeconds(600))))
+                .andExpect(status().isUnauthorized());
+
+        jdbc.update("UPDATE member SET is_deleted = true WHERE member_id = ?", account.member().memberId());
+        mvc.perform(profilePatch("{\"memberName\":\"새 이름\"}", null)
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").doesNotExist());
+    }
+
+    private org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder profilePatch(
+            String json, MockMultipartFile image
+    ) {
+        var request = multipart(HttpMethod.PATCH, "/api/v1/members/me")
+                .file(new MockMultipartFile("request", "", MediaType.APPLICATION_JSON_VALUE, json.getBytes()));
+        if (image != null) {
+            request.file(image);
+        }
+        return request;
+    }
+
+    private MockMultipartFile png() {
+        return new MockMultipartFile("profileImage", "../../traversal.png", "image/png",
+                new byte[] {(byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10});
+    }
+
     private void assertUnauthorizedProfile(String authorization) throws Exception {
         var request = get("/api/v1/members/me");
         if (authorization != null) {
@@ -613,6 +807,33 @@ class IdentityMariaDbIntegrationTest {
         @Primary
         ControlledGenerator controlledGenerator() {
             return new ControlledGenerator();
+        }
+
+        @Bean
+        @Primary
+        FakeProfileImageStorage fakeProfileImageStorage() {
+            return new FakeProfileImageStorage();
+        }
+    }
+
+    static class FakeProfileImageStorage implements ProfileImageStoragePort {
+
+        private final List<String> deleted = new CopyOnWriteArrayList<>();
+        private final AtomicBoolean failNextStore = new AtomicBoolean();
+
+        @Override
+        public StoredProfileImage store(Long memberId, ProfileImageUpload image) {
+            if (failNextStore.getAndSet(false)) {
+                throw new IllegalStateException("private object storage details");
+            }
+            return new StoredProfileImage("https://images.example/members/" + memberId + "/profile/test.png");
+        }
+
+        @Override
+        public void deleteOwnedImage(Long memberId, String imageUrl) {
+            if (imageUrl != null && imageUrl.startsWith("https://images.example/members/" + memberId + "/profile/")) {
+                deleted.add(imageUrl);
+            }
         }
     }
 
