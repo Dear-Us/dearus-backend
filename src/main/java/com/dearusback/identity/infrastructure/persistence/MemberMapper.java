@@ -13,6 +13,7 @@ final class MemberMapper {
                 member.id(),
                 member.name(),
                 member.email(),
+                member.timezone(),
                 member.profileImageUrl(),
                 member.lastSelectedBabyId(),
                 member.isDeleted()
@@ -28,6 +29,7 @@ final class MemberMapper {
                 entity.id(),
                 entity.name(),
                 entity.email(),
+                entity.timezone(),
                 entity.profileImageUrl(),
                 entity.lastSelectedBabyId(),
                 entity.deleted(),

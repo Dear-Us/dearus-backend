@@ -65,6 +65,10 @@ class SocialLoginTransactionServiceTest {
         assertThat(result.member().memberName()).isEqualTo("김소은");
         assertThat(result.member().profileImageUrl()).isEqualTo("https://image.example/google.png");
         assertThat(memberRepository.count()).isOne();
+        assertThat(memberRepository.findBySocialAccount(SocialProvider.GOOGLE, "google-1"))
+                .get()
+                .extracting(Member::timezone)
+                .isEqualTo("Asia/Seoul");
     }
 
     @Test
@@ -73,6 +77,7 @@ class SocialLoginTransactionServiceTest {
                 10L,
                 "DearUs 이름",
                 "old@example.com",
+                "Europe/Paris",
                 "https://image.example/dearus.png",
                 null,
                 false,
@@ -91,6 +96,10 @@ class SocialLoginTransactionServiceTest {
         assertThat(result.member().memberName()).isEqualTo("DearUs 이름");
         assertThat(result.member().profileImageUrl()).isEqualTo("https://image.example/dearus.png");
         assertThat(memberRepository.count()).isOne();
+        assertThat(memberRepository.findBySocialAccount(SocialProvider.GOOGLE, "google-1"))
+                .get()
+                .extracting(Member::timezone)
+                .isEqualTo("Europe/Paris");
         assertThat(memberRepository.findBySocialAccount(SocialProvider.GOOGLE, "google-1"))
                 .get()
                 .extracting(member -> member.socialAccounts().getFirst().providerEmail())
@@ -125,6 +134,7 @@ class SocialLoginTransactionServiceTest {
                 10L,
                 "탈퇴 회원",
                 null,
+                "Asia/Seoul",
                 null,
                 null,
                 true,
@@ -208,6 +218,7 @@ class SocialLoginTransactionServiceTest {
                     id,
                     member.name(),
                     member.email(),
+                    member.timezone(),
                     member.profileImageUrl(),
                     member.lastSelectedBabyId(),
                     member.isDeleted(),

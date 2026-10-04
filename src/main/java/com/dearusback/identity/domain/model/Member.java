@@ -6,10 +6,12 @@ import java.util.Objects;
 public final class Member {
 
     public static final String DEFAULT_NAME = "사용자";
+    public static final String DEFAULT_TIMEZONE = "Asia/Seoul";
 
     private final Long id;
     private final String name;
     private final String email;
+    private final String timezone;
     private final String profileImageUrl;
     private final Long lastSelectedBabyId;
     private final boolean deleted;
@@ -19,6 +21,7 @@ public final class Member {
             Long id,
             String name,
             String email,
+            String timezone,
             String profileImageUrl,
             Long lastSelectedBabyId,
             boolean deleted,
@@ -27,6 +30,7 @@ public final class Member {
         this.id = id;
         this.name = requireText(name, "name");
         this.email = email;
+        this.timezone = requireText(timezone, "timezone");
         this.profileImageUrl = profileImageUrl;
         this.lastSelectedBabyId = lastSelectedBabyId;
         this.deleted = deleted;
@@ -44,6 +48,7 @@ public final class Member {
                 null,
                 initialName,
                 email,
+                DEFAULT_TIMEZONE,
                 profileImageUrl,
                 null,
                 false,
@@ -68,6 +73,10 @@ public final class Member {
 
     public String email() {
         return email;
+    }
+
+    public String timezone() {
+        return timezone;
     }
 
     public String profileImageUrl() {

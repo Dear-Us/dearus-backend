@@ -30,6 +30,9 @@ class MemberJpaEntity {
     @Column(name = "email", length = 320)
     private String email;
 
+    @Column(name = "timezone", nullable = false, length = 50)
+    private String timezone;
+
     @Column(name = "profile_image_url", length = 2048)
     private String profileImageUrl;
 
@@ -58,6 +61,7 @@ class MemberJpaEntity {
             Long id,
             String name,
             String email,
+            String timezone,
             String profileImageUrl,
             Long lastSelectedBabyId,
             boolean deleted
@@ -65,6 +69,7 @@ class MemberJpaEntity {
         this.id = id;
         this.name = name;
         this.email = email;
+        this.timezone = timezone;
         this.profileImageUrl = profileImageUrl;
         this.lastSelectedBabyId = lastSelectedBabyId;
         this.deleted = deleted;
@@ -97,6 +102,10 @@ class MemberJpaEntity {
 
     String email() {
         return email;
+    }
+
+    String timezone() {
+        return timezone;
     }
 
     String profileImageUrl() {

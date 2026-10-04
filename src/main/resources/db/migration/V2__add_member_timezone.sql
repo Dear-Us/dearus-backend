@@ -1,0 +1,2 @@
+ALTER TABLE member
+    ADD COLUMN timezone VARCHAR(50) NOT NULL DEFAULT 'Asia/Seoul';

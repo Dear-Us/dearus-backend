@@ -17,7 +17,7 @@ class GetMyProfileServiceTest {
 
     @Test
     void returnsProfileWithoutProviderUserId() {
-        Member member = new Member(7L, "기존 이름", "member@example.com", "https://example.com/image.jpg",
+        Member member = new Member(7L, "기존 이름", "member@example.com", "Europe/Paris", "https://example.com/image.jpg",
                 42L, false, List.of(
                 new SocialAccount(1L, SocialProvider.GOOGLE, "private-google-id", "google@example.com"),
                 new SocialAccount(2L, SocialProvider.KAKAO, "private-kakao-id", null)
@@ -28,7 +28,7 @@ class GetMyProfileServiceTest {
         assertThat(result.email()).isEqualTo("member@example.com");
         assertThat(result.memberName()).isEqualTo("기존 이름");
         assertThat(result.profileImageUrl()).isEqualTo("https://example.com/image.jpg");
-        assertThat(result.timezone()).isEqualTo("Asia/Seoul");
+        assertThat(result.timezone()).isEqualTo("Europe/Paris");
         assertThat(result.lastSelectedBabyId()).isEqualTo(42L);
         assertThat(result.socialAccounts()).hasSize(2);
         assertThat(result.socialAccounts().get(0).provider()).isEqualTo(SocialProvider.GOOGLE);
@@ -46,7 +46,7 @@ class GetMyProfileServiceTest {
 
     @Test
     void withdrawnMemberIsForbidden() {
-        Member withdrawn = new Member(7L, "기존 이름", null, null, null, true, List.of());
+        Member withdrawn = new Member(7L, "기존 이름", null, "Asia/Seoul", null, null, true, List.of());
         assertThatThrownBy(() -> new GetMyProfileService(repository(Optional.of(withdrawn))).getMyProfile(7L))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(error -> assertThat(((BusinessException) error).errorCode())

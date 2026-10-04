@@ -32,7 +32,7 @@ public class GetMyProfileService implements GetMyProfileQuery {
                 member.email(),
                 member.name(),
                 member.profileImageUrl(),
-                "Asia/Seoul",
+                member.timezone(),
                 member.lastSelectedBabyId(),
                 member.socialAccounts().stream()
                         .map(account -> new SocialAccountResult(account.provider(), account.providerEmail()))

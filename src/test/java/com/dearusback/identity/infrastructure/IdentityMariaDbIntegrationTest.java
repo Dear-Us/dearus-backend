@@ -24,6 +24,8 @@ import com.dearusback.identity.infrastructure.config.AuthProperties;
 import com.dearusback.identity.infrastructure.token.SecureRefreshTokenGenerator;
 import com.dearusback.support.domain.exception.BusinessException;
 import java.time.Instant;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -44,8 +46,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
@@ -103,6 +108,58 @@ class IdentityMariaDbIntegrationTest {
 
     @Autowired
     private AuthProperties authProperties;
+
+    @Test
+    void v1MemberReceivesDefaultTimezoneAfterV2Migration() throws Exception {
+        String schema = "timezone_migration_" + UUID.randomUUID().toString().replace("-", "");
+        try (Connection admin = DriverManager.getConnection(MARIADB.getJdbcUrl(), "root", MARIADB.getPassword());
+             var statement = admin.createStatement()) {
+            statement.execute("CREATE DATABASE " + schema);
+        }
+
+        String jdbcUrl = "jdbc:mariadb://" + MARIADB.getHost() + ":" + MARIADB.getMappedPort(3306) + "/" + schema;
+        Flyway.configure()
+                .dataSource(jdbcUrl, "root", MARIADB.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("1"))
+                .load().migrate();
+        JdbcTemplate isolatedJdbc = new JdbcTemplate(new DriverManagerDataSource(
+                jdbcUrl, "root", MARIADB.getPassword()
+        ));
+        isolatedJdbc.update("""
+                INSERT INTO member (member_name, is_deleted, created_at, updated_at)
+                VALUES ('기존 회원', false, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
+                """);
+
+        Flyway.configure()
+                .dataSource(jdbcUrl, "root", MARIADB.getPassword())
+                .locations("classpath:db/migration")
+                .load().migrate();
+
+        assertThat(isolatedJdbc.queryForObject("SELECT timezone FROM member WHERE member_name = '기존 회원'",
+                String.class)).isEqualTo("Asia/Seoul");
+        assertThat(isolatedJdbc.queryForObject("""
+                SELECT COUNT(*) FROM flyway_schema_history
+                WHERE version IN ('1', '2') AND success = 1
+                """, Integer.class)).isEqualTo(2);
+        assertThat(isolatedJdbc.queryForObject("""
+                SELECT IS_NULLABLE FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'member' AND COLUMN_NAME = 'timezone'
+                """, String.class, schema)).isEqualTo("NO");
+    }
+
+    @Test
+    void newAuth01MemberPersistsTimezoneAndDatabaseRejectsNull() {
+        SocialLoginResult loginResult = register();
+        Long memberId = loginResult.member().memberId();
+
+        assertThat(jdbc.queryForObject("SELECT timezone FROM member WHERE member_id = ?",
+                String.class, memberId)).isEqualTo("Asia/Seoul");
+        assertThatThrownBy(() -> jdbc.update("UPDATE member SET timezone = NULL WHERE member_id = ?", memberId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(jdbc.queryForObject("SELECT timezone FROM member WHERE member_id = ?",
+                String.class, memberId)).isEqualTo("Asia/Seoul");
+    }
 
     @Test
     void rotatesTokenAndAllowsAnotherRotation() {
@@ -388,8 +445,8 @@ class IdentityMariaDbIntegrationTest {
         SocialLoginResult loginResult = login.loginOrRegister(new VerifiedSocialIdentity(
                 SocialProvider.GOOGLE, providerUserId, "google@example.com", "김소은", null
         ));
-        jdbc.update("UPDATE member SET member_name = ?, email = ?, profile_image_url = ?, last_selected_baby_id = ? WHERE member_id = ?",
-                "기존 이름", "member@example.com", "https://example.com/profile.png", 77L,
+        jdbc.update("UPDATE member SET member_name = ?, email = ?, timezone = ?, profile_image_url = ?, last_selected_baby_id = ? WHERE member_id = ?",
+                "기존 이름", "member@example.com", "Europe/Paris", "https://example.com/profile.png", 77L,
                 loginResult.member().memberId());
         login.loginOrRegister(new VerifiedSocialIdentity(
                 SocialProvider.GOOGLE, providerUserId, "google@example.com", "Provider 이름", null
@@ -403,7 +460,7 @@ class IdentityMariaDbIntegrationTest {
                 .andExpect(jsonPath("$.data.email").value("member@example.com"))
                 .andExpect(jsonPath("$.data.memberName").value("기존 이름"))
                 .andExpect(jsonPath("$.data.profileImageUrl").value("https://example.com/profile.png"))
-                .andExpect(jsonPath("$.data.timezone").value("Asia/Seoul"))
+                .andExpect(jsonPath("$.data.timezone").value("Europe/Paris"))
                 .andExpect(jsonPath("$.data.lastSelectedBabyId").value(77))
                 .andExpect(jsonPath("$.data.socialAccounts[0].provider").value("GOOGLE"))
                 .andExpect(jsonPath("$.data.socialAccounts[0].providerEmail").value("google@example.com"))
