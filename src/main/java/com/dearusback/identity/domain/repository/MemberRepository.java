@@ -15,4 +15,6 @@ public interface MemberRepository {
     Member save(Member member);
 
     Member updateProfile(Member member);
+
+    int initializeLastSelectedBabyId(Long memberId, Long babyId);
 }

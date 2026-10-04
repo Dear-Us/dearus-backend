@@ -50,4 +50,9 @@ public class MemberPersistenceAdapter implements MemberRepository {
         repository.flush();
         return MemberMapper.toDomain(entity);
     }
+
+    @Override
+    public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
+        return repository.initializeLastSelectedBabyId(memberId, babyId);
+    }
 }

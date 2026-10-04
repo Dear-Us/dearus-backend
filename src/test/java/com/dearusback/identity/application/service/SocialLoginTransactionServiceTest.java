@@ -213,6 +213,11 @@ class SocialLoginTransactionServiceTest {
             return save(member);
         }
 
+        @Override
+        public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
+            throw new UnsupportedOperationException();
+        }
+
         void seed(Member member) {
             SocialAccount account = member.socialAccounts().getFirst();
             members.put(key(account.provider(), account.providerUserId()), member);

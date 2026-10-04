@@ -6,6 +6,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Qualifier;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -31,7 +32,8 @@ public class ProfileImageStorageConfiguration {
 
     @Bean
     @ConditionalOnProperty(prefix = "dearus.profile-image.storage", name = "enabled", havingValue = "true")
-    ProfileImageStoragePort s3ProfileImageStoragePort(S3Client client, ProfileImageStorageProperties properties) {
+    ProfileImageStoragePort s3ProfileImageStoragePort(
+            @Qualifier("profileImageS3Client") S3Client client, ProfileImageStorageProperties properties) {
         return new S3ProfileImageStorageAdapter(client, properties.bucket(), properties.publicBaseUrl());
     }
 

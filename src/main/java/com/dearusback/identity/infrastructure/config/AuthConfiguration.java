@@ -3,7 +3,6 @@ package com.dearusback.identity.infrastructure.config;
 import com.dearusback.identity.application.model.AuthTokenPolicy;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import com.nimbusds.jose.proc.SecurityContext;
-import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
 import javax.crypto.SecretKey;
@@ -27,11 +26,6 @@ import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 @Configuration
 @EnableConfigurationProperties(AuthProperties.class)
 public class AuthConfiguration {
-
-    @Bean
-    Clock clock() {
-        return Clock.systemUTC();
-    }
 
     @Bean
     AuthTokenPolicy authTokenPolicy(AuthProperties properties) {
