@@ -176,6 +176,11 @@ class SocialLoginTransactionServiceTest {
         private final Map<String, Member> members = new LinkedHashMap<>();
 
         @Override
+        public Optional<Member> findById(Long memberId) {
+            return members.values().stream().filter(member -> member.id().equals(memberId)).findFirst();
+        }
+
+        @Override
         public Optional<Member> findBySocialAccount(SocialProvider provider, String providerUserId) {
             return Optional.ofNullable(members.get(key(provider, providerUserId)));
         }
@@ -218,6 +223,16 @@ class SocialLoginTransactionServiceTest {
     private static final class CapturingRefreshSessionRepository implements RefreshSessionRepository {
 
         private final List<CapturedRefreshSession> sessions = new ArrayList<>();
+
+        @Override
+        public Optional<com.dearusback.identity.domain.model.RefreshSession> findByTokenHash(String tokenHash) {
+            return Optional.empty();
+        }
+
+        @Override
+        public boolean revokeIfActive(Long sessionId, Instant now) {
+            return false;
+        }
 
         @Override
         public void save(Long memberId, String tokenHash, Instant expiresAt, Instant createdAt) {

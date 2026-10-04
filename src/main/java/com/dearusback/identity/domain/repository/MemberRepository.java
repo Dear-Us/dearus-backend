@@ -6,6 +6,8 @@ import java.util.Optional;
 
 public interface MemberRepository {
 
+    Optional<Member> findById(Long memberId);
+
     Optional<Member> findBySocialAccount(SocialProvider provider, String providerUserId);
 
     Member save(Member member);

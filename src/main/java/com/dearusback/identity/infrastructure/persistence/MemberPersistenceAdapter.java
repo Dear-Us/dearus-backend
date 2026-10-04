@@ -18,6 +18,11 @@ public class MemberPersistenceAdapter implements MemberRepository {
     }
 
     @Override
+    public Optional<Member> findById(Long memberId) {
+        return repository.findWithSocialAccountsById(memberId).map(MemberMapper::toDomain);
+    }
+
+    @Override
     public Optional<Member> findBySocialAccount(SocialProvider provider, String providerUserId) {
         return repository.findBySocialAccount(provider, providerUserId).map(MemberMapper::toDomain);
     }

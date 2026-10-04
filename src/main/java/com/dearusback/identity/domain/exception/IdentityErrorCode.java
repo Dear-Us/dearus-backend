@@ -28,6 +28,11 @@ public enum IdentityErrorCode implements ErrorCode {
             "SOCIAL_ACCOUNT_CONFLICT",
             "소셜 계정 처리 중 충돌이 발생했습니다.",
             ErrorType.CONFLICT
+    ),
+    INVALID_REFRESH_TOKEN(
+            "INVALID_REFRESH_TOKEN",
+            "인증 정보가 유효하지 않습니다.",
+            ErrorType.UNAUTHORIZED
     );
 
     private final String code;

@@ -45,4 +45,20 @@ class RefreshTokenJpaEntity {
         this.expiresAt = expiresAt;
         this.createdAt = createdAt;
     }
+
+    Long id() {
+        return id;
+    }
+
+    Long memberId() {
+        return memberId;
+    }
+
+    Instant expiresAt() {
+        return expiresAt;
+    }
+
+    Instant revokedAt() {
+        return revokedAt;
+    }
 }

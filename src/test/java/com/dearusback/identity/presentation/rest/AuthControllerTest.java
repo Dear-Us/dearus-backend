@@ -108,7 +108,7 @@ class AuthControllerTest {
 
     private MockMvc mockMvc(SocialLoginUseCase useCase) {
         return MockMvcBuilders
-                .standaloneSetup(new AuthController(useCase))
+                .standaloneSetup(new AuthController(useCase, command -> null))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

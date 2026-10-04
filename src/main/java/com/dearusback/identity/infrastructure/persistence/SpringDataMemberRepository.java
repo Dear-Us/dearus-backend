@@ -8,6 +8,9 @@ import org.springframework.data.repository.query.Param;
 
 interface SpringDataMemberRepository extends JpaRepository<MemberJpaEntity, Long> {
 
+    @Query("select distinct member from MemberJpaEntity member left join fetch member.socialAccounts where member.id = :memberId")
+    Optional<MemberJpaEntity> findWithSocialAccountsById(@Param("memberId") Long memberId);
+
     @Query("""
             select distinct member
             from MemberJpaEntity member
