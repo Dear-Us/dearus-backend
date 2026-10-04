@@ -1,6 +1,7 @@
 package com.dearusback.family.infrastructure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -9,6 +10,7 @@ import com.dearusback.family.application.model.BabyImageUpload;
 import com.dearusback.family.application.port.out.BabyProfileImageStoragePort;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
+import java.sql.Date;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -262,6 +264,129 @@ class BabyMariaDbIntegrationTest {
             assertOwner(secondId, memberId);
             assertThat(selectedBaby(memberId)).isIn(firstId, secondId);
         }
+    }
+
+    @Test
+    void listBabiesFiltersStatusesDeletionAndOtherMembersAndSortsDeterministically() throws Exception {
+        long currentMember = insertMember("Asia/Seoul", false);
+        long otherMember = insertMember("Asia/Seoul", false);
+        Instant firstTime = Instant.parse("2026-01-01T00:00:00Z");
+        Instant secondTime = firstTime.plusSeconds(60);
+        Instant sameTime = firstTime.plusSeconds(120);
+
+        long ownerBaby = insertBaby(currentMember, "첫째", "2020-01-01", "MALE", null, false, firstTime);
+        insertMembership(ownerBaby, currentMember, "OWNER", "ACTIVE");
+        long caregiverBaby = insertBaby(otherMember, "둘째", "2021-02-02", "FEMALE",
+                "https://images.example/babies/profile/second.jpg", false, secondTime);
+        insertMembership(caregiverBaby, otherMember, "OWNER", "ACTIVE");
+        insertMembership(caregiverBaby, currentMember, "CAREGIVER", "ACTIVE");
+
+        long tieFirst = insertBaby(currentMember, "동일시각1", "2022-03-03", "MALE", null, false, sameTime);
+        long tieSecond = insertBaby(currentMember, "동일시각2", "2023-04-04", "FEMALE", null, false, sameTime);
+        insertMembership(tieFirst, currentMember, "OWNER", "ACTIVE");
+        insertMembership(tieSecond, currentMember, "OWNER", "ACTIVE");
+
+        long leftBaby = insertBaby(currentMember, "탈퇴", "2020-01-01", "MALE", null, false, firstTime);
+        insertMembership(leftBaby, currentMember, "OWNER", "LEFT");
+        long removedBaby = insertBaby(currentMember, "제외", "2020-01-01", "MALE", null, false, firstTime);
+        insertMembership(removedBaby, currentMember, "OWNER", "REMOVED");
+        long deletedBaby = insertBaby(currentMember, "삭제", "2020-01-01", "MALE", null, true, firstTime);
+        insertMembership(deletedBaby, currentMember, "OWNER", "ACTIVE");
+        long otherBaby = insertBaby(otherMember, "다른회원", "2020-01-01", "MALE", null, false, firstTime);
+        insertMembership(otherBaby, otherMember, "OWNER", "ACTIVE");
+
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", caregiverBaby, currentMember);
+        JsonNode response = listBabies(token(currentMember), 200);
+        assertThat(response.path("success").asBoolean()).isTrue();
+        assertThat(response.path("message").isNull()).isTrue();
+        assertThat(response.has("errorCode")).isFalse();
+        JsonNode data = response.path("data");
+        assertThat(data.isArray()).isTrue();
+        assertThat(data.size()).isEqualTo(4);
+        assertBabyResponse(data.get(0), ownerBaby, "첫째", "2020-01-01", "MALE", null, "OWNER");
+        assertBabyResponse(data.get(1), caregiverBaby, "둘째", "2021-02-02", "FEMALE",
+                "https://images.example/babies/profile/second.jpg", "CAREGIVER");
+        assertBabyResponse(data.get(2), tieFirst, "동일시각1", "2022-03-03", "MALE", null, "OWNER");
+        assertBabyResponse(data.get(3), tieSecond, "동일시각2", "2023-04-04", "FEMALE", null, "OWNER");
+        assertThat(selectedBaby(currentMember)).isEqualTo(caregiverBaby);
+    }
+
+    @Test
+    void listBabiesWithoutActiveMembershipReturnsEmptyArray() throws Exception {
+        long currentMember = insertMember("Asia/Seoul", false);
+        long otherMember = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(otherMember, "다른회원", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, otherMember, "OWNER", "ACTIVE");
+        JsonNode response = listBabies(token(currentMember), 200);
+        assertThat(response.path("success").asBoolean()).isTrue();
+        assertThat(response.path("data").isArray()).isTrue();
+        assertThat(response.path("data").size()).isZero();
+        assertThat(response.path("message").isNull()).isTrue();
+        assertThat(selectedBaby(currentMember)).isNull();
+    }
+
+    @Test
+    void listBabiesChecksAuthenticationAndMemberStatus() throws Exception {
+        assertFailure(listBabies(null, 401));
+        assertFailure(listBabies("invalid.jwt", 401));
+        assertFailure(listBabies(token(Long.MAX_VALUE), 401));
+        assertFailure(listBabies(token(insertMember("Asia/Seoul", true)), 403));
+    }
+
+    private long insertBaby(long creatorId, String name, String birthDate, String gender,
+                            String imageUrl, boolean deleted, Instant createdAt) {
+        GeneratedKeyHolder keys = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            var statement = connection.prepareStatement("INSERT INTO baby "
+                    + "(created_by_member_id, baby_name, birth_date, gender, profile_image_url, "
+                    + "is_deleted, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    new String[]{"baby_id"});
+            statement.setLong(1, creatorId);
+            statement.setString(2, name);
+            statement.setDate(3, Date.valueOf(birthDate));
+            statement.setString(4, gender);
+            statement.setString(5, imageUrl);
+            statement.setBoolean(6, deleted);
+            statement.setTimestamp(7, Timestamp.from(createdAt));
+            statement.setTimestamp(8, Timestamp.from(createdAt));
+            statement.setTimestamp(9, deleted ? Timestamp.from(createdAt.plusSeconds(1)) : null);
+            return statement;
+        }, keys);
+        return keys.getKey().longValue();
+    }
+
+    private void insertMembership(long babyId, long memberId, String role, String status) {
+        Instant now = Instant.now();
+        jdbc.update("INSERT INTO baby_member (baby_id, member_id, role, status, joined_at, ended_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?)", babyId, memberId, role, status, Timestamp.from(now),
+                "ACTIVE".equals(status) ? null : Timestamp.from(now.plusSeconds(1)));
+    }
+
+    private JsonNode listBabies(String token, int expectedStatus) throws Exception {
+        var request = get("/api/v1/babies");
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+        String response = mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString();
+        return mapper.readTree(response);
+    }
+
+    private void assertBabyResponse(JsonNode actual, long id, String name, String birthDate,
+                                    String gender, String imageUrl, String role) {
+        assertThat(actual.size()).isEqualTo(6);
+        assertThat(actual.path("babyId").asLong()).isEqualTo(id);
+        assertThat(actual.path("babyName").asText()).isEqualTo(name);
+        assertThat(actual.path("birthDate").asText()).isEqualTo(birthDate);
+        assertThat(actual.path("gender").asText()).isEqualTo(gender);
+        if (imageUrl == null) {
+            assertThat(actual.path("profileImageUrl").isNull()).isTrue();
+        } else {
+            assertThat(actual.path("profileImageUrl").asText()).isEqualTo(imageUrl);
+        }
+        assertThat(actual.path("myRole").asText()).isEqualTo(role);
+        assertThat(actual.has("isSelected")).isFalse();
+        assertThat(actual.has("errorCode")).isFalse();
     }
 
     private long insertMember(String timezone, boolean deleted) {
