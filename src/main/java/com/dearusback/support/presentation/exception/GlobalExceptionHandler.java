@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -21,6 +23,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(toHttpStatus(exception.errorCode().type()))
                 .body(ApiResponse.failure(exception.errorCode()));
+    }
+
+    @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
+    public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(Exception exception) {
+        return ResponseEntity
+                .badRequest()
+                .body(ApiResponse.failure(CommonErrorCode.INVALID_REQUEST));
     }
 
     @ExceptionHandler(Exception.class)
@@ -38,6 +47,7 @@ public class GlobalExceptionHandler {
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
             case CONFLICT -> HttpStatus.CONFLICT;
+            case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             case INTERNAL_SERVER_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
     }
