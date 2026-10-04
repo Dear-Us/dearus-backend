@@ -12,4 +12,10 @@ public record BabyMember(Long id, Long memberId, BabyMemberRole role, BabyMember
         Objects.requireNonNull(status);
         Objects.requireNonNull(joinedAt);
     }
+
+    public BabyMember remove(Instant now) {
+        return status == BabyMemberStatus.ACTIVE
+                ? new BabyMember(id, memberId, role, BabyMemberStatus.REMOVED, joinedAt, now)
+                : this;
+    }
 }

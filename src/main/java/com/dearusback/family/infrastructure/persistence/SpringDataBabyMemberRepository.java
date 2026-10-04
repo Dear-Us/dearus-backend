@@ -18,6 +18,11 @@ interface SpringDataBabyMemberRepository extends JpaRepository<BabyMemberJpaEnti
     Optional<BabyMemberJpaEntity> findByBabyAndMemberForUpdate(
             @Param("babyId") Long babyId, @Param("memberId") Long memberId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select membership from BabyMemberJpaEntity membership "
+            + "where membership.baby.id = :babyId order by membership.id")
+    List<BabyMemberJpaEntity> findAllByBabyIdForUpdate(@Param("babyId") Long babyId);
+
     @Query("""
             select new com.dearusback.family.application.model.MyBabySummary(
                 baby.id, baby.name, baby.birthDate, baby.gender, baby.profileImageUrl, membership.role)

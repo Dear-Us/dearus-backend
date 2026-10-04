@@ -7,6 +7,7 @@ public enum FamilyErrorCode implements ErrorCode {
     INVALID_BABY_ID("INVALID_BABY_ID", "아기 ID가 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     BABY_NOT_FOUND("BABY_NOT_FOUND", "아기 정보를 찾을 수 없습니다.", ErrorType.NOT_FOUND),
     BABY_UPDATE_FORBIDDEN("BABY_UPDATE_FORBIDDEN", "아기 정보를 수정할 권한이 없습니다.", ErrorType.FORBIDDEN),
+    BABY_DELETE_FORBIDDEN("BABY_DELETE_FORBIDDEN", "아기를 삭제할 권한이 없습니다.", ErrorType.FORBIDDEN),
     INVALID_BABY_UPDATE("INVALID_BABY_UPDATE", "수정할 아기 정보가 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     INVALID_BABY_NAME("INVALID_BABY_NAME", "아기 이름은 1~50자여야 합니다.", ErrorType.BAD_REQUEST),
     INVALID_BIRTH_DATE("INVALID_BIRTH_DATE", "생년월일이 올바르지 않습니다.", ErrorType.BAD_REQUEST),

@@ -89,6 +89,11 @@ class GetMyProfileServiceTest {
             public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
                 throw new UnsupportedOperationException();
             }
+
+            @Override
+            public int clearLastSelectedBabyIfMatches(Long babyId) {
+                throw new UnsupportedOperationException();
+            }
         };
     }
 }

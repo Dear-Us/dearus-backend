@@ -59,6 +59,10 @@ class BabyMemberJpaEntity {
     }
 
     void assignBaby(BabyJpaEntity baby) { this.baby = baby; }
+    void updateStatus(BabyMemberStatus newStatus, Instant newEndedAt) {
+        status = newStatus;
+        endedAt = newEndedAt;
+    }
     Long id() { return id; }
     Long memberId() { return memberId; }
     BabyMemberRole role() { return role; }

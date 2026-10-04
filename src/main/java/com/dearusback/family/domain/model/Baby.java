@@ -39,4 +39,12 @@ public record Baby(Long id, Long createdByMemberId, String name, LocalDate birth
         return new Baby(id, createdByMemberId, newName, newBirthDate, newGender,
                 newProfileImageUrl, deleted, createdAt, now, deletedAt, members);
     }
+
+    public Baby markDeleted(Instant now) {
+        if (deleted) {
+            throw new IllegalStateException("Baby already deleted");
+        }
+        return new Baby(id, createdByMemberId, name, birthDate, gender, null,
+                true, createdAt, now, now, members.stream().map(member -> member.remove(now)).toList());
+    }
 }

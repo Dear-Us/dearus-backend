@@ -1,6 +1,7 @@
 package com.dearusback.family.infrastructure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -10,8 +11,8 @@ import com.dearusback.DearUsBackApplication;
 import com.dearusback.family.application.model.BabyImageUpload;
 import com.dearusback.family.application.port.out.BabyProfileImageStoragePort;
 import java.nio.charset.StandardCharsets;
-import java.sql.Timestamp;
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -31,8 +32,8 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.http.MediaType;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.mock.web.MockMultipartFile;
@@ -721,6 +722,231 @@ class BabyMariaDbIntegrationTest {
         assertThat(selectedBaby(owner)).isNull();
         assertThat(babyRow(baby)).isEqualTo(babyBefore);
         assertThat(membershipRow(baby, owner)).isEqualTo(membershipBefore);
+    }
+
+    @Test
+    void ownerDeletesBabyAndClearsOnlyMatchingSelections() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long otherCaregiver = insertMember("Asia/Seoul", false);
+        long unrelated = insertMember("Asia/Seoul", false);
+        Instant now = Instant.now();
+        String imageUrl = "https://images.example/babies/profile/deleted.jpg";
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", imageUrl, false, now);
+        long anotherBaby = insertBaby(otherCaregiver, "서윤", "2021-01-01", "FEMALE", null, false, now);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, otherCaregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, unrelated, "CAREGIVER", "LEFT");
+        long removedMember = insertMember("Asia/Seoul", false);
+        insertMembership(baby, removedMember, "CAREGIVER", "REMOVED");
+        insertMembership(anotherBaby, otherCaregiver, "OWNER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id IN (?, ?)", baby, owner, caregiver);
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", anotherBaby, otherCaregiver);
+        var leftBefore = membershipRow(baby, unrelated);
+        var removedBefore = membershipRow(baby, removedMember);
+        var otherBabyBefore = babyRow(anotherBaby);
+        String jwt = token(owner);
+
+        assertDeleted(deleteBaby(Long.toString(baby), jwt, 200));
+
+        var row = babyRow(baby);
+        assertThat(row.get("is_deleted")).isEqualTo(true);
+        assertThat(row.get("deleted_at")).isNotNull();
+        assertThat(row.get("profile_image_url")).isNull();
+        assertThat(row.get("created_by_member_id")).isEqualTo(owner);
+        assertThat(row.get("baby_name")).isEqualTo("도윤");
+        for (long activeMember : new long[]{owner, caregiver, otherCaregiver}) {
+            var membership = membershipRow(baby, activeMember);
+            assertThat(membership.get("status")).isEqualTo("REMOVED");
+            assertThat(membership.get("ended_at")).isNotNull();
+        }
+        assertThat(membershipRow(baby, owner).get("role")).isEqualTo("OWNER");
+        assertThat(membershipRow(baby, caregiver).get("role")).isEqualTo("CAREGIVER");
+        assertThat(membershipRow(baby, unrelated)).isEqualTo(leftBefore);
+        assertThat(membershipRow(baby, removedMember)).isEqualTo(removedBefore);
+        assertThat(selectedBaby(owner)).isNull();
+        assertThat(selectedBaby(caregiver)).isNull();
+        assertThat(selectedBaby(otherCaregiver)).isEqualTo(anotherBaby);
+        assertThat(selectedBaby(unrelated)).isNull();
+        assertThat(babyRow(anotherBaby)).isEqualTo(otherBabyBefore);
+        assertThat(storage.deleted).containsExactly(imageUrl);
+        assertThat(storage.deletedDuringTransaction).containsExactly(false);
+        assertThat(listBabies(jwt, 200).path("data").size()).isZero();
+        assertFailure(detailBaby(Long.toString(baby), jwt, 404));
+        assertFailure(changeSelection(jwt, "{\"babyId\":" + baby + "}", 404));
+        assertFailure(deleteBaby(Long.toString(baby), jwt, 404));
+    }
+
+    @Test
+    void deletionRequiresActiveOwnerAndHidesInaccessibleBabies() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long outsider = insertMember("Asia/Seoul", false);
+        long left = insertMember("Asia/Seoul", false);
+        long removed = insertMember("Asia/Seoul", false);
+        Instant now = Instant.now();
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, now);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        long deleted = insertBaby(owner, "삭제", "2020-01-01", "MALE", null, true, now);
+        insertMembership(deleted, owner, "OWNER", "ACTIVE");
+        var before = babyRow(baby);
+        var ownerBefore = membershipRow(baby, owner);
+
+        assertFailure(deleteBaby(Long.toString(baby), token(caregiver), 403));
+        for (long member : new long[]{outsider, left, removed}) {
+            JsonNode response = deleteBaby(Long.toString(baby), token(member), 404);
+            assertFailure(response);
+            assertThat(response.path("message").asText()).isEqualTo("아기 정보를 찾을 수 없습니다.");
+        }
+        for (long unavailable : new long[]{Long.MAX_VALUE, deleted}) {
+            JsonNode response = deleteBaby(Long.toString(unavailable), token(owner), 404);
+            assertFailure(response);
+            assertThat(response.path("message").asText()).isEqualTo("아기 정보를 찾을 수 없습니다.");
+        }
+        assertThat(babyRow(baby)).isEqualTo(before);
+        assertThat(membershipRow(baby, owner)).isEqualTo(ownerBefore);
+    }
+
+    @Test
+    void deletionValidatesPathAndAuthentication() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        for (String invalid : List.of("0", "-1", "not-a-number")) {
+            assertFailure(deleteBaby(invalid, token(owner), 400));
+        }
+        assertFailure(deleteBaby(Long.toString(baby), null, 401));
+        assertFailure(deleteBaby(Long.toString(baby), "invalid.jwt", 401));
+        assertFailure(deleteBaby(Long.toString(baby), token(Long.MAX_VALUE), 401));
+        assertFailure(deleteBaby(Long.toString(baby), token(insertMember("Asia/Seoul", true)), 403));
+        assertThat(babyRow(baby).get("is_deleted")).isEqualTo(false);
+        assertOwner(baby, owner);
+    }
+
+    @Test
+    void membershipFailureRollsBackBabyAndKeepsImage() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        String imageUrl = "https://images.example/babies/profile/keep.jpg";
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", imageUrl, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        var babyBefore = babyRow(baby);
+        var membershipBefore = membershipRow(baby, owner);
+        jdbc.execute("CREATE TRIGGER baby05_reject_membership BEFORE UPDATE ON baby_member "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced membership failure'");
+        try {
+            assertFailure(deleteBaby(Long.toString(baby), token(owner), 500));
+        } finally {
+            jdbc.execute("DROP TRIGGER baby05_reject_membership");
+        }
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(membershipRow(baby, owner)).isEqualTo(membershipBefore);
+        assertThat(storage.deleted).isEmpty();
+    }
+
+    @Test
+    void selectedMemberFailureRollsBackBabyAndMembershipAndKeepsImage() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        String imageUrl = "https://images.example/babies/profile/keep.jpg";
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", imageUrl, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", baby, owner);
+        var babyBefore = babyRow(baby);
+        var membershipBefore = membershipRow(baby, owner);
+        jdbc.execute("CREATE TRIGGER baby05_reject_member BEFORE UPDATE ON member "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced selection clear failure'");
+        try {
+            assertFailure(deleteBaby(Long.toString(baby), token(owner), 500));
+        } finally {
+            jdbc.execute("DROP TRIGGER baby05_reject_member");
+        }
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(membershipRow(baby, owner)).isEqualTo(membershipBefore);
+        assertThat(selectedBaby(owner)).isEqualTo(baby);
+        assertThat(storage.deleted).isEmpty();
+    }
+
+    @Test
+    void storageCleanupFailureDoesNotUndoCommittedDeletion() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE",
+                "https://images.example/babies/profile/fail.jpg", false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", baby, owner);
+        storage.failDelete.set(true);
+
+        assertDeleted(deleteBaby(Long.toString(baby), token(owner), 200));
+
+        assertThat(babyRow(baby).get("is_deleted")).isEqualTo(true);
+        assertThat(membershipRow(baby, owner).get("status")).isEqualTo("REMOVED");
+        assertThat(selectedBaby(owner)).isNull();
+        assertThat(storage.deleted).isEmpty();
+        assertThat(storage.deletedDuringTransaction).containsExactly(false);
+    }
+
+    @Test
+    void concurrentDeletesOnlyDeleteOnce() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        String jwt = token(owner);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Integer> first = executor.submit(() -> deleteStatus(baby, jwt));
+            Future<Integer> second = executor.submit(() -> deleteStatus(baby, jwt));
+            assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(200, 404);
+        }
+        assertThat(babyRow(baby).get("is_deleted")).isEqualTo(true);
+        assertThat(membershipRow(baby, owner).get("status")).isEqualTo("REMOVED");
+    }
+
+    @Test
+    void concurrentPatchCannotRestoreDeletedBaby() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        String jwt = token(owner);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Integer> deletion = executor.submit(() -> deleteStatus(baby, jwt));
+            Future<Integer> update = executor.submit(() -> {
+                var request = multipart(HttpMethod.PATCH, "/api/v1/babies/{babyId}", baby)
+                        .file(new MockMultipartFile("request", "request.json", MediaType.APPLICATION_JSON_VALUE,
+                                "{\"babyName\":\"수정됨\"}".getBytes(StandardCharsets.UTF_8)))
+                        .header("Authorization", "Bearer " + jwt);
+                return mvc.perform(request).andReturn().getResponse().getStatus();
+            });
+            assertThat(deletion.get(10, TimeUnit.SECONDS)).isEqualTo(200);
+            assertThat(update.get(10, TimeUnit.SECONDS)).isIn(200, 404);
+        }
+        assertThat(babyRow(baby).get("is_deleted")).isEqualTo(true);
+        assertThat(membershipRow(baby, owner).get("status")).isEqualTo("REMOVED");
+        assertFailure(detailBaby(Long.toString(baby), jwt, 404));
+    }
+
+    private int deleteStatus(long babyId, String jwt) throws Exception {
+        return mvc.perform(delete("/api/v1/babies/{babyId}", babyId)
+                .header("Authorization", "Bearer " + jwt)).andReturn().getResponse().getStatus();
+    }
+
+    private JsonNode deleteBaby(String babyId, String jwt, int expectedStatus) throws Exception {
+        var request = delete("/api/v1/babies/{babyId}", babyId);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        String response = mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString();
+        return mapper.readTree(response);
+    }
+
+    private void assertDeleted(JsonNode response) {
+        assertThat(response.size()).isEqualTo(3);
+        assertThat(response.path("success").asBoolean()).isTrue();
+        assertThat(response.path("data").isNull()).isTrue();
+        assertThat(response.path("message").isNull()).isTrue();
+        assertThat(response.has("errorCode")).isFalse();
     }
 
     private JsonNode changeSelection(String jwt, String json, int expectedStatus) throws Exception {

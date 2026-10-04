@@ -8,5 +8,9 @@ public interface BabyRepository {
 
     Optional<Baby> findByIdForUpdate(Long babyId, Long memberId);
 
+    Optional<Baby> findByIdAndAllMembersForUpdate(Long babyId);
+
     Baby update(Baby baby);
+
+    void markDeleted(Baby baby);
 }

@@ -16,6 +16,11 @@ interface SpringDataMemberRepository extends JpaRepository<MemberJpaEntity, Long
             + "where member.id = :memberId and member.lastSelectedBabyId is null and member.deleted = false")
     int initializeLastSelectedBabyId(@Param("memberId") Long memberId, @Param("babyId") Long babyId);
 
+    @Modifying
+    @Query("update MemberJpaEntity member set member.lastSelectedBabyId = null "
+            + "where member.lastSelectedBabyId = :babyId")
+    int clearLastSelectedBabyIfMatches(@Param("babyId") Long babyId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select member from MemberJpaEntity member where member.id = :memberId")
     Optional<MemberJpaEntity> findByIdForUpdate(@Param("memberId") Long memberId);

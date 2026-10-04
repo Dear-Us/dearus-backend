@@ -33,6 +33,11 @@ public class BabyRegistrationMemberService implements BabyRegistrationMemberAcce
         members.initializeLastSelectedBabyId(memberId, babyId);
     }
 
+    @Override
+    public void clearLastSelectedBabyIfMatches(Long babyId) {
+        members.clearLastSelectedBabyIfMatches(babyId);
+    }
+
     private BabyRegistrationMember requireActive(Optional<Member> found) {
         Member member = found.orElseThrow(() -> new IdentityException(IdentityErrorCode.INVALID_AUTHENTICATION));
         if (member.isDeleted()) {

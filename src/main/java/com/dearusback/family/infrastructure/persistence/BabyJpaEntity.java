@@ -88,6 +88,13 @@ class BabyJpaEntity {
         updatedAt = now;
     }
 
+    void markDeleted(Instant now) {
+        deleted = true;
+        deletedAt = now;
+        updatedAt = now;
+        profileImageUrl = null;
+    }
+
     Long id() { return id; }
     Long createdByMemberId() { return createdByMemberId; }
     String name() { return name; }

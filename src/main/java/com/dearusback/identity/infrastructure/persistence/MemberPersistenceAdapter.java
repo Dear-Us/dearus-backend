@@ -64,4 +64,9 @@ public class MemberPersistenceAdapter implements MemberRepository {
     public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
         return repository.initializeLastSelectedBabyId(memberId, babyId);
     }
+
+    @Override
+    public int clearLastSelectedBabyIfMatches(Long babyId) {
+        return repository.clearLastSelectedBabyIfMatches(babyId);
+    }
 }

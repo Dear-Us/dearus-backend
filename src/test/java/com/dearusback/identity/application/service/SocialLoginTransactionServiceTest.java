@@ -223,6 +223,11 @@ class SocialLoginTransactionServiceTest {
             throw new UnsupportedOperationException();
         }
 
+        @Override
+        public int clearLastSelectedBabyIfMatches(Long babyId) {
+            throw new UnsupportedOperationException();
+        }
+
         void seed(Member member) {
             SocialAccount account = member.socialAccounts().getFirst();
             members.put(key(account.provider(), account.providerUserId()), member);
