@@ -80,6 +80,8 @@ public class SocialLoginTransactionService {
     }
 
     private SocialLoginResult loginExisting(Member member, VerifiedSocialIdentity identity) {
+        member = memberRepository.findByIdForUpdate(member.id())
+                .orElseThrow(() -> new IdentityException(IdentityErrorCode.INVALID_AUTHENTICATION));
         if (member.isDeleted()) {
             throw new IdentityException(IdentityErrorCode.WITHDRAWN_MEMBER);
         }

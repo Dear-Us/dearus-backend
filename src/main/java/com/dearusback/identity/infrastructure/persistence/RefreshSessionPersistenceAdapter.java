@@ -36,6 +36,11 @@ public class RefreshSessionPersistenceAdapter implements RefreshSessionRepositor
     }
 
     @Override
+    public int revokeAllForMember(Long memberId, Instant revokedAt) {
+        return repository.revokeAllForMember(memberId, revokedAt);
+    }
+
+    @Override
     public void save(Long memberId, String tokenHash, Instant expiresAt, Instant createdAt) {
         repository.saveAndFlush(new RefreshTokenJpaEntity(memberId, tokenHash, expiresAt, createdAt));
     }

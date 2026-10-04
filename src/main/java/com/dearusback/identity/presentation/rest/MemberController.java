@@ -6,6 +6,7 @@ import com.dearusback.identity.application.model.UpdateMyProfileCommand;
 import com.dearusback.identity.application.port.in.ChangeLastSelectedBabyUseCase;
 import com.dearusback.identity.application.port.in.GetMyProfileQuery;
 import com.dearusback.identity.application.port.in.UpdateMyProfileUseCase;
+import com.dearusback.identity.application.port.in.WithdrawMemberUseCase;
 import com.dearusback.identity.domain.exception.IdentityErrorCode;
 import com.dearusback.identity.domain.exception.IdentityException;
 import com.dearusback.identity.presentation.dto.ChangeLastSelectedBabyRequest;
@@ -19,6 +20,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -33,12 +35,21 @@ public class MemberController {
     private final GetMyProfileQuery getMyProfileQuery;
     private final UpdateMyProfileUseCase updateMyProfileUseCase;
     private final ChangeLastSelectedBabyUseCase changeLastSelectedBabyUseCase;
+    private final WithdrawMemberUseCase withdrawMemberUseCase;
 
     public MemberController(GetMyProfileQuery getMyProfileQuery, UpdateMyProfileUseCase updateMyProfileUseCase,
-                            ChangeLastSelectedBabyUseCase changeLastSelectedBabyUseCase) {
+                            ChangeLastSelectedBabyUseCase changeLastSelectedBabyUseCase,
+                            WithdrawMemberUseCase withdrawMemberUseCase) {
         this.getMyProfileQuery = getMyProfileQuery;
         this.updateMyProfileUseCase = updateMyProfileUseCase;
         this.changeLastSelectedBabyUseCase = changeLastSelectedBabyUseCase;
+        this.withdrawMemberUseCase = withdrawMemberUseCase;
+    }
+
+    @DeleteMapping("/me")
+    public ResponseEntity<ApiResponse<Void>> withdraw(@AuthenticationPrincipal Long memberId) {
+        withdrawMemberUseCase.withdraw(memberId);
+        return ResponseEntity.ok(ApiResponse.successWithoutData());
     }
 
     @GetMapping("/me")

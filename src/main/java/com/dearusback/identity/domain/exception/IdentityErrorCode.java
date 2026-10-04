@@ -24,6 +24,11 @@ public enum IdentityErrorCode implements ErrorCode {
             "탈퇴한 회원입니다.",
             ErrorType.FORBIDDEN
     ),
+    ACTIVE_OWNED_BABY_EXISTS(
+            "ACTIVE_OWNED_BABY_EXISTS",
+            "소유 중인 아기가 있어 탈퇴할 수 없습니다.",
+            ErrorType.CONFLICT
+    ),
     SOCIAL_ACCOUNT_CONFLICT(
             "SOCIAL_ACCOUNT_CONFLICT",
             "소셜 계정 처리 중 충돌이 발생했습니다.",

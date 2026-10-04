@@ -18,6 +18,8 @@ public interface MemberRepository {
 
     Member updateLastSelectedBabyId(Member member);
 
+    void withdraw(Member member);
+
     int initializeLastSelectedBabyId(Long memberId, Long babyId);
 
     int clearLastSelectedBabyIfMatches(Long babyId);

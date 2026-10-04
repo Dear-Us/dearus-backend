@@ -89,6 +89,13 @@ class MemberJpaEntity {
         lastSelectedBabyId = babyId;
     }
 
+    void withdraw(Instant now) {
+        deleted = true;
+        deletedAt = now;
+        lastSelectedBabyId = null;
+        profileImageUrl = null;
+    }
+
     @PrePersist
     void prePersist() {
         Instant now = Instant.now();
@@ -127,6 +134,10 @@ class MemberJpaEntity {
 
     boolean deleted() {
         return deleted;
+    }
+
+    Instant deletedAt() {
+        return deletedAt;
     }
 
     List<SocialAccountJpaEntity> socialAccounts() {

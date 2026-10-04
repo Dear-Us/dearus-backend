@@ -86,6 +86,11 @@ class GetMyProfileServiceTest {
             }
 
             @Override
+            public void withdraw(Member member) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
             public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
                 throw new UnsupportedOperationException();
             }

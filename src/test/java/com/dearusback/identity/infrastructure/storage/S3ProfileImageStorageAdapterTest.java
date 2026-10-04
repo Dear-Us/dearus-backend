@@ -46,6 +46,7 @@ class S3ProfileImageStorageAdapterTest {
     void deletesOnlyAnOwnedGeneratedKeyForTheCorrectMember() {
         S3Client client = mock(S3Client.class);
         var adapter = adapter(client);
+        assertThat(adapter.owns(7L, BASE + "/" + KEY)).isTrue();
         adapter.deleteOwnedImage(7L, BASE + "/" + KEY);
 
         ArgumentCaptor<DeleteObjectRequest> request = ArgumentCaptor.forClass(DeleteObjectRequest.class);
@@ -58,6 +59,10 @@ class S3ProfileImageStorageAdapterTest {
     void neverDeletesProviderForeignMemberOrUnrecognizedUrls() {
         S3Client client = mock(S3Client.class);
         var adapter = adapter(client);
+        assertThat(adapter.owns(7L, "https://k.kakaocdn.net/profile.png")).isFalse();
+        assertThat(adapter.owns(8L, BASE + "/" + KEY)).isFalse();
+        assertThat(adapter.owns(7L, BASE + "/members/7/profile/../../other.png")).isFalse();
+        assertThat(adapter.owns(7L, BASE + ".evil.example/" + KEY)).isFalse();
         adapter.deleteOwnedImage(7L, "https://k.kakaocdn.net/profile.png");
         adapter.deleteOwnedImage(8L, BASE + "/" + KEY);
         adapter.deleteOwnedImage(7L, BASE + "/members/7/profile/../../other.png");

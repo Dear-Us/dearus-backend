@@ -33,6 +33,7 @@ final class MemberMapper {
                 entity.profileImageUrl(),
                 entity.lastSelectedBabyId(),
                 entity.deleted(),
+                entity.deletedAt(),
                 entity.socialAccounts().stream().map(MemberMapper::toDomain).toList()
         );
     }

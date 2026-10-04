@@ -23,6 +23,13 @@ interface SpringDataBabyMemberRepository extends JpaRepository<BabyMemberJpaEnti
             + "where membership.baby.id = :babyId order by membership.id")
     List<BabyMemberJpaEntity> findAllByBabyIdForUpdate(@Param("babyId") Long babyId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select membership from BabyMemberJpaEntity membership join membership.baby baby "
+            + "where membership.memberId = :memberId and membership.status = :activeStatus "
+            + "and baby.deleted = false order by membership.id")
+    List<BabyMemberJpaEntity> findActiveMembershipsByMemberForUpdate(
+            @Param("memberId") Long memberId, @Param("activeStatus") BabyMemberStatus activeStatus);
+
     @Query("""
             select new com.dearusback.family.application.model.MyBabySummary(
                 baby.id, baby.name, baby.birthDate, baby.gender, baby.profileImageUrl, membership.role)

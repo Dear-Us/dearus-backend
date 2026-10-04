@@ -2,6 +2,7 @@ package com.dearusback.identity.domain.model;
 
 import com.dearusback.identity.domain.exception.IdentityErrorCode;
 import com.dearusback.identity.domain.exception.IdentityException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -17,6 +18,7 @@ public final class Member {
     private final String profileImageUrl;
     private final Long lastSelectedBabyId;
     private final boolean deleted;
+    private final Instant deletedAt;
     private final List<SocialAccount> socialAccounts;
 
     public Member(
@@ -29,6 +31,12 @@ public final class Member {
             boolean deleted,
             List<SocialAccount> socialAccounts
     ) {
+        this(id, name, email, timezone, profileImageUrl, lastSelectedBabyId, deleted, null, socialAccounts);
+    }
+
+    public Member(Long id, String name, String email, String timezone, String profileImageUrl,
+                  Long lastSelectedBabyId, boolean deleted, Instant deletedAt,
+                  List<SocialAccount> socialAccounts) {
         this.id = id;
         this.name = requireText(name, "name");
         this.email = email;
@@ -36,6 +44,7 @@ public final class Member {
         this.profileImageUrl = profileImageUrl;
         this.lastSelectedBabyId = lastSelectedBabyId;
         this.deleted = deleted;
+        this.deletedAt = deletedAt;
         this.socialAccounts = List.copyOf(Objects.requireNonNull(socialAccounts, "socialAccounts must not be null"));
     }
 
@@ -81,7 +90,15 @@ public final class Member {
         if (babyId == null || babyId <= 0) {
             throw new IdentityException(IdentityErrorCode.INVALID_LAST_SELECTED_BABY_ID);
         }
-        return new Member(id, name, email, timezone, profileImageUrl, babyId, deleted, socialAccounts);
+        return new Member(id, name, email, timezone, profileImageUrl, babyId, deleted, deletedAt, socialAccounts);
+    }
+
+    public Member withdraw(Instant now) {
+        if (deleted) {
+            throw new IdentityException(IdentityErrorCode.WITHDRAWN_MEMBER);
+        }
+        return new Member(id, name, email, timezone, null, null, true,
+                Objects.requireNonNull(now), socialAccounts);
     }
 
     public static String normalizeName(String value) {
@@ -97,7 +114,7 @@ public final class Member {
 
     private Member copy(String newName, String newProfileImageUrl) {
         return new Member(id, newName, email, timezone, newProfileImageUrl,
-                lastSelectedBabyId, deleted, socialAccounts);
+                lastSelectedBabyId, deleted, deletedAt, socialAccounts);
     }
 
     public Long id() {
@@ -126,6 +143,10 @@ public final class Member {
 
     public boolean isDeleted() {
         return deleted;
+    }
+
+    public Instant deletedAt() {
+        return deletedAt;
     }
 
     public List<SocialAccount> socialAccounts() {

@@ -219,6 +219,11 @@ class SocialLoginTransactionServiceTest {
         }
 
         @Override
+        public void withdraw(Member member) {
+            save(member);
+        }
+
+        @Override
         public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
             throw new UnsupportedOperationException();
         }
@@ -273,6 +278,11 @@ class SocialLoginTransactionServiceTest {
         @Override
         public boolean revokeByTokenHash(String tokenHash, Instant revokedAt) {
             return false;
+        }
+
+        @Override
+        public int revokeAllForMember(Long memberId, Instant revokedAt) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

@@ -63,6 +63,10 @@ class BabyMemberJpaEntity {
         status = newStatus;
         endedAt = newEndedAt;
     }
+    void leave(Instant now) {
+        status = BabyMemberStatus.LEFT;
+        endedAt = now;
+    }
     Long id() { return id; }
     Long memberId() { return memberId; }
     BabyMemberRole role() { return role; }

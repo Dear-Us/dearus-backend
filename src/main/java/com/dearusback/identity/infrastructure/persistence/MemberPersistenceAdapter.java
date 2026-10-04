@@ -61,6 +61,14 @@ public class MemberPersistenceAdapter implements MemberRepository {
     }
 
     @Override
+    public void withdraw(Member member) {
+        MemberJpaEntity entity = repository.findById(member.id())
+                .orElseThrow(() -> new IllegalStateException("Member disappeared during withdrawal"));
+        entity.withdraw(member.deletedAt());
+        repository.flush();
+    }
+
+    @Override
     public int initializeLastSelectedBabyId(Long memberId, Long babyId) {
         return repository.initializeLastSelectedBabyId(memberId, babyId);
     }

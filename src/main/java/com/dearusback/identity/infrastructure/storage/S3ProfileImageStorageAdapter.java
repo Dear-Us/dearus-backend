@@ -58,18 +58,22 @@ public final class S3ProfileImageStorageAdapter implements ProfileImageStoragePo
 
     @Override
     public void deleteOwnedImage(Long memberId, String imageUrl) {
+        if (!owns(memberId, imageUrl)) {
+            return;
+        }
         String prefix = publicBaseUrl + "/members/" + memberId + "/profile/";
-        if (imageUrl == null || !imageUrl.startsWith(prefix)) {
-            return;
-        }
         String filename = imageUrl.substring(prefix.length());
-        if (!GENERATED_FILENAME.matcher(filename).matches()) {
-            return;
-        }
         client.deleteObject(DeleteObjectRequest.builder()
                 .bucket(bucket)
                 .key("members/" + memberId + "/profile/" + filename)
                 .build());
+    }
+
+    @Override
+    public boolean owns(Long memberId, String imageUrl) {
+        String prefix = publicBaseUrl + "/members/" + memberId + "/profile/";
+        return imageUrl != null && imageUrl.startsWith(prefix)
+                && GENERATED_FILENAME.matcher(imageUrl.substring(prefix.length())).matches();
     }
 
     private static String normalizePublicBaseUrl(String configured) {

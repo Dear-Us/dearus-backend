@@ -60,7 +60,7 @@ public class ReissueTokenService implements ReissueTokenUseCase {
             throw invalidRefreshToken();
         }
 
-        Member member = members.findById(oldSession.memberId())
+        Member member = members.findByIdForUpdate(oldSession.memberId())
                 .orElseThrow(this::invalidRefreshToken);
         if (member.isDeleted()) {
             throw new IdentityException(IdentityErrorCode.WITHDRAWN_MEMBER);

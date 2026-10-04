@@ -2,6 +2,7 @@ package com.dearusback.identity.infrastructure;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -30,6 +31,8 @@ import com.dearusback.support.domain.exception.BusinessException;
 import java.time.Instant;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.Date;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -57,6 +60,7 @@ import org.flywaydb.core.api.MigrationVersion;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpMethod;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -68,6 +72,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.mock.web.MockMultipartFile;
 import org.testcontainers.mariadb.MariaDBContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -715,6 +720,326 @@ class IdentityMariaDbIntegrationTest {
                 .andExpect(jsonPath("$.errorCode").doesNotExist());
     }
 
+    @Test
+    void member04WithdrawsWithoutBabiesAndRevokesEverySession() throws Exception {
+        VerifiedSocialIdentity socialIdentity = identity();
+        SocialLoginResult first = login.loginOrRegister(socialIdentity);
+        SocialLoginResult second = login.loginOrRegister(socialIdentity);
+        SocialLoginResult third = login.loginOrRegister(socialIdentity);
+        long memberId = first.member().memberId();
+        jdbc.update("UPDATE refresh_token SET revoked_at = CURRENT_TIMESTAMP(6) WHERE token_hash = ?",
+                hasher.hash(third.refreshToken()));
+        Instant alreadyRevoked = revokedAt(third.refreshToken());
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", 777L, memberId);
+        long socialCount = jdbc.queryForObject("SELECT count(*) FROM social_account WHERE member_id = ?",
+                Long.class, memberId);
+
+        assertWithdrawalSuccess(withdrawHttp(first.accessToken(), 200));
+
+        var member = memberRow(memberId);
+        assertThat(member.get("is_deleted")).isEqualTo(true);
+        assertThat(member.get("deleted_at")).isNotNull();
+        assertThat(member.get("last_selected_baby_id")).isNull();
+        assertThat(revokedAt(first.refreshToken())).isNotNull();
+        assertThat(revokedAt(second.refreshToken())).isNotNull();
+        assertThat(revokedAt(third.refreshToken())).isEqualTo(alreadyRevoked);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM social_account WHERE member_id = ?",
+                Long.class, memberId)).isEqualTo(socialCount);
+        mvc.perform(post("/api/v1/auth/reissue").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"" + second.refreshToken() + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").doesNotExist());
+        assertThatThrownBy(() -> login.loginOrRegister(socialIdentity))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(error -> assertThat(((BusinessException) error).errorCode())
+                        .isEqualTo(IdentityErrorCode.WITHDRAWN_MEMBER));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM member WHERE member_id = ?", Long.class, memberId))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void member04LeavesActiveCaregiversWithoutChangingPastOrOtherRelationships() throws Exception {
+        SocialLoginResult account = register();
+        long memberId = account.member().memberId();
+        long otherMember = register().member().memberId();
+        long activeBaby = insertWithdrawalBaby(otherMember, false);
+        long leftBaby = insertWithdrawalBaby(otherMember, false);
+        long removedBaby = insertWithdrawalBaby(otherMember, false);
+        long deletedBaby = insertWithdrawalBaby(otherMember, true);
+        insertWithdrawalMembership(activeBaby, memberId, "CAREGIVER", "ACTIVE");
+        insertWithdrawalMembership(activeBaby, otherMember, "OWNER", "ACTIVE");
+        insertWithdrawalMembership(leftBaby, memberId, "CAREGIVER", "LEFT");
+        insertWithdrawalMembership(removedBaby, memberId, "CAREGIVER", "REMOVED");
+        insertWithdrawalMembership(deletedBaby, memberId, "CAREGIVER", "ACTIVE");
+        var leftBefore = withdrawalMembershipRow(leftBaby, memberId);
+        var removedBefore = withdrawalMembershipRow(removedBaby, memberId);
+        var deletedBefore = withdrawalMembershipRow(deletedBaby, memberId);
+        var otherBefore = withdrawalMembershipRow(activeBaby, otherMember);
+
+        assertWithdrawalSuccess(withdrawHttp(account.accessToken(), 200));
+
+        var active = withdrawalMembershipRow(activeBaby, memberId);
+        assertThat(active.get("status")).isEqualTo("LEFT");
+        assertThat(active.get("ended_at")).isNotNull();
+        assertThat(withdrawalMembershipRow(leftBaby, memberId)).isEqualTo(leftBefore);
+        assertThat(withdrawalMembershipRow(removedBaby, memberId)).isEqualTo(removedBefore);
+        assertThat(withdrawalMembershipRow(deletedBaby, memberId)).isEqualTo(deletedBefore);
+        assertThat(withdrawalMembershipRow(activeBaby, otherMember)).isEqualTo(otherBefore);
+    }
+
+    @Test
+    void member04ActiveOwnerBlocksEveryWithdrawalChange() throws Exception {
+        SocialLoginResult account = register();
+        long memberId = account.member().memberId();
+        long otherMember = register().member().memberId();
+        long ownedBaby = insertWithdrawalBaby(memberId, false);
+        long caregiverBaby = insertWithdrawalBaby(otherMember, false);
+        insertWithdrawalMembership(ownedBaby, memberId, "OWNER", "ACTIVE");
+        insertWithdrawalMembership(caregiverBaby, memberId, "CAREGIVER", "ACTIVE");
+        var memberBefore = memberRow(memberId);
+        var caregiverBefore = withdrawalMembershipRow(caregiverBaby, memberId);
+
+        String response = withdrawHttp(account.accessToken(), 409);
+
+        assertThat(response).contains("\"success\":false", "\"data\":null")
+                .doesNotContain("errorCode");
+        assertThat(memberRow(memberId)).isEqualTo(memberBefore);
+        assertThat(withdrawalMembershipRow(caregiverBaby, memberId)).isEqualTo(caregiverBefore);
+        assertThat(revokedAt(account.refreshToken())).isNull();
+        assertThat(reissue.reissue(new ReissueTokenCommand(account.refreshToken())).refreshToken()).isNotBlank();
+    }
+
+    @Test
+    void member04DeletedBabyOwnerHistoryDoesNotBlockWithdrawal() throws Exception {
+        SocialLoginResult account = register();
+        long memberId = account.member().memberId();
+        long deletedBaby = insertWithdrawalBaby(memberId, true);
+        insertWithdrawalMembership(deletedBaby, memberId, "OWNER", "ACTIVE");
+        var pastMembership = withdrawalMembershipRow(deletedBaby, memberId);
+
+        assertWithdrawalSuccess(withdrawHttp(account.accessToken(), 200));
+
+        assertThat(memberRow(memberId).get("is_deleted")).isEqualTo(true);
+        assertThat(withdrawalMembershipRow(deletedBaby, memberId)).isEqualTo(pastMembership);
+    }
+
+    @Test
+    void member04OwnedImageIsRemovedAfterCommitAndProviderImageIsNotDeleted() throws Exception {
+        SocialLoginResult owned = register();
+        long ownedId = owned.member().memberId();
+        String ownedUrl = "https://images.example/members/" + ownedId + "/profile/" + UUID.randomUUID() + ".png";
+        jdbc.update("UPDATE member SET profile_image_url = ? WHERE member_id = ?", ownedUrl, ownedId);
+
+        assertWithdrawalSuccess(withdrawHttp(owned.accessToken(), 200));
+        assertThat(memberRow(ownedId).get("profile_image_url")).isNull();
+        assertThat(profileImages.deleted).contains(ownedUrl);
+        assertThat(profileImages.deletedDuringTransaction.getLast()).isFalse();
+
+        SocialLoginResult provider = register();
+        long providerId = provider.member().memberId();
+        String providerUrl = "https://provider.example/" + UUID.randomUUID() + "/avatar.png";
+        jdbc.update("UPDATE member SET profile_image_url = ? WHERE member_id = ?", providerUrl, providerId);
+        int attempts = profileImages.deletedDuringTransaction.size();
+
+        assertWithdrawalSuccess(withdrawHttp(provider.accessToken(), 200));
+        assertThat(profileImages.deletedDuringTransaction).hasSize(attempts);
+        assertThat(profileImages.deleted).doesNotContain(providerUrl);
+        assertThat(memberRow(providerId).get("profile_image_url")).isNull();
+    }
+
+    @Test
+    void member04ImageCleanupFailureKeepsSuccessfulWithdrawal() throws Exception {
+        SocialLoginResult account = register();
+        long memberId = account.member().memberId();
+        String ownedUrl = "https://images.example/members/" + memberId + "/profile/" + UUID.randomUUID() + ".png";
+        jdbc.update("UPDATE member SET profile_image_url = ? WHERE member_id = ?", ownedUrl, memberId);
+        profileImages.failNextDelete.set(true);
+
+        assertWithdrawalSuccess(withdrawHttp(account.accessToken(), 200));
+
+        assertThat(memberRow(memberId).get("is_deleted")).isEqualTo(true);
+        assertThat(memberRow(memberId).get("profile_image_url")).isNull();
+        assertThat(profileImages.deleted).doesNotContain(ownedUrl);
+        assertThat(profileImages.deletedDuringTransaction.getLast()).isFalse();
+    }
+
+    @Test
+    void member04RequiresAuthenticationAndRejectsAlreadyWithdrawnMember() throws Exception {
+        SocialLoginResult account = register();
+        assertThat(withdrawHttp(null, 401)).doesNotContain("errorCode");
+        assertThat(withdrawHttp("invalid.jwt", 401)).doesNotContain("errorCode");
+        assertThat(withdrawHttp(signedToken("9223372036854775807", "dearus",
+                Instant.now().plusSeconds(600)), 401)).doesNotContain("errorCode");
+        assertWithdrawalSuccess(withdrawHttp(account.accessToken(), 200));
+        assertThat(withdrawHttp(account.accessToken(), 403)).doesNotContain("errorCode");
+    }
+
+    @Test
+    void member04ConcurrentReissueCannotLeaveActiveSessionAfterWithdrawal() throws Exception {
+        SocialLoginResult account = register();
+        CountDownLatch start = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<String> withdrawal = executor.submit(() -> {
+                start.await();
+                return withdrawHttp(account.accessToken(), 200);
+            });
+            Future<Object> rotation = executor.submit(() -> {
+                start.await();
+                try {
+                    return reissue.reissue(new ReissueTokenCommand(account.refreshToken()));
+                } catch (BusinessException error) {
+                    return error;
+                }
+            });
+            start.countDown();
+            assertWithdrawalSuccess(withdrawal.get(20, TimeUnit.SECONDS));
+            assertThat(rotation.get(20, TimeUnit.SECONDS))
+                    .isInstanceOfAny(ReissueTokenResult.class, BusinessException.class);
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM refresh_token "
+                + "WHERE member_id = ? AND revoked_at IS NULL", Long.class, account.member().memberId()))
+                .isZero();
+    }
+
+    @Test
+    void member04ConcurrentBabyCreationNeverLeavesWithdrawnOwner() throws Exception {
+        SocialLoginResult account = register();
+        long memberId = account.member().memberId();
+        CountDownLatch start = new CountDownLatch(1);
+        int withdrawalStatus;
+        int creationStatus;
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<Integer> withdrawal = executor.submit(() -> {
+                start.await();
+                return mvc.perform(delete("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                        .andReturn().getResponse().getStatus();
+            });
+            Future<Integer> creation = executor.submit(() -> {
+                start.await();
+                return mvc.perform(multipart("/api/v1/babies")
+                        .file(new MockMultipartFile("request", "request.json", MediaType.APPLICATION_JSON_VALUE,
+                                "{\"babyName\":\"동시성\",\"birthDate\":\"2020-01-01\",\"gender\":\"MALE\"}"
+                                        .getBytes()))
+                        .header("Authorization", "Bearer " + account.accessToken()))
+                        .andReturn().getResponse().getStatus();
+            });
+            start.countDown();
+            withdrawalStatus = withdrawal.get(20, TimeUnit.SECONDS);
+            creationStatus = creation.get(20, TimeUnit.SECONDS);
+        }
+        assertThat(List.of(withdrawalStatus, creationStatus))
+                .isIn(List.of(200, 403), List.of(409, 201));
+        long ownerCount = jdbc.queryForObject("SELECT count(*) FROM baby_member membership "
+                + "JOIN baby ON baby.baby_id = membership.baby_id WHERE membership.member_id = ? "
+                + "AND membership.role = 'OWNER' AND membership.status = 'ACTIVE' "
+                + "AND baby.is_deleted = false", Long.class, memberId);
+        boolean deleted = (boolean) memberRow(memberId).get("is_deleted");
+        assertThat(deleted && ownerCount > 0).isFalse();
+    }
+
+    @Test
+    void member04CaregiverFailureRollsBackMemberAndTokens() throws Exception {
+        WithdrawalFixture fixture = withdrawalFixture();
+        assertWithdrawalFailureRollsBack(fixture, "baby_member", "member04_reject_caregiver");
+    }
+
+    @Test
+    void member04TokenFailureRollsBackCaregiverAndMember() throws Exception {
+        WithdrawalFixture fixture = withdrawalFixture();
+        assertWithdrawalFailureRollsBack(fixture, "refresh_token", "member04_reject_token");
+    }
+
+    @Test
+    void member04MemberFailureRollsBackCaregiverAndTokens() throws Exception {
+        WithdrawalFixture fixture = withdrawalFixture();
+        assertWithdrawalFailureRollsBack(fixture, "member", "member04_reject_member");
+    }
+
+    private WithdrawalFixture withdrawalFixture() {
+        SocialLoginResult account = register();
+        long memberId = account.member().memberId();
+        long ownerId = register().member().memberId();
+        long babyId = insertWithdrawalBaby(ownerId, false);
+        insertWithdrawalMembership(babyId, memberId, "CAREGIVER", "ACTIVE");
+        String imageUrl = "https://images.example/members/" + memberId + "/profile/" + UUID.randomUUID() + ".png";
+        jdbc.update("UPDATE member SET profile_image_url = ?, last_selected_baby_id = ? WHERE member_id = ?",
+                imageUrl, babyId, memberId);
+        return new WithdrawalFixture(account, babyId, imageUrl);
+    }
+
+    private void assertWithdrawalFailureRollsBack(WithdrawalFixture fixture, String table, String triggerName)
+            throws Exception {
+        long memberId = fixture.account().member().memberId();
+        var memberBefore = memberRow(memberId);
+        var caregiverBefore = withdrawalMembershipRow(fixture.babyId(), memberId);
+        jdbc.execute("CREATE TRIGGER " + triggerName + " BEFORE UPDATE ON " + table
+                + " FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced withdrawal failure'");
+        try {
+            assertThat(withdrawHttp(fixture.account().accessToken(), 500)).doesNotContain("errorCode");
+        } finally {
+            jdbc.execute("DROP TRIGGER " + triggerName);
+        }
+        assertThat(memberRow(memberId)).isEqualTo(memberBefore);
+        assertThat(withdrawalMembershipRow(fixture.babyId(), memberId)).isEqualTo(caregiverBefore);
+        assertThat(revokedAt(fixture.account().refreshToken())).isNull();
+        assertThat(profileImages.deleted).doesNotContain(fixture.imageUrl());
+    }
+
+    private String withdrawHttp(String token, int expectedStatus) throws Exception {
+        var request = delete("/api/v1/members/me");
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+        return mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString();
+    }
+
+    private void assertWithdrawalSuccess(String response) {
+        assertThat(response).isEqualTo("{\"success\":true,\"data\":null,\"message\":null}");
+    }
+
+    private java.util.Map<String, Object> memberRow(long memberId) {
+        return jdbc.queryForMap("SELECT member_name, profile_image_url, last_selected_baby_id, "
+                + "is_deleted, deleted_at FROM member WHERE member_id = ?", memberId);
+    }
+
+    private java.util.Map<String, Object> withdrawalMembershipRow(long babyId, long memberId) {
+        return jdbc.queryForMap("SELECT role, status, joined_at, ended_at FROM baby_member "
+                + "WHERE baby_id = ? AND member_id = ?", babyId, memberId);
+    }
+
+    private long insertWithdrawalBaby(long creatorId, boolean deleted) {
+        Instant now = Instant.now();
+        GeneratedKeyHolder keys = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            var statement = connection.prepareStatement("INSERT INTO baby "
+                    + "(created_by_member_id, baby_name, birth_date, gender, is_deleted, "
+                    + "created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    new String[]{"baby_id"});
+            statement.setLong(1, creatorId);
+            statement.setString(2, "테스트 아기");
+            statement.setDate(3, Date.valueOf("2020-01-01"));
+            statement.setString(4, "MALE");
+            statement.setBoolean(5, deleted);
+            statement.setTimestamp(6, Timestamp.from(now));
+            statement.setTimestamp(7, Timestamp.from(now));
+            statement.setTimestamp(8, deleted ? Timestamp.from(now) : null);
+            return statement;
+        }, keys);
+        return keys.getKey().longValue();
+    }
+
+    private void insertWithdrawalMembership(long babyId, long memberId, String role, String status) {
+        Instant now = Instant.now();
+        jdbc.update("INSERT INTO baby_member (baby_id, member_id, role, status, joined_at, ended_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?)", babyId, memberId, role, status,
+                Timestamp.from(now), "ACTIVE".equals(status) ? null : Timestamp.from(now));
+    }
+
+    private record WithdrawalFixture(SocialLoginResult account, long babyId, String imageUrl) {
+    }
+
     private org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder profilePatch(
             String json, MockMultipartFile image
     ) {
@@ -819,7 +1144,9 @@ class IdentityMariaDbIntegrationTest {
     static class FakeProfileImageStorage implements ProfileImageStoragePort {
 
         private final List<String> deleted = new CopyOnWriteArrayList<>();
+        private final List<Boolean> deletedDuringTransaction = new CopyOnWriteArrayList<>();
         private final AtomicBoolean failNextStore = new AtomicBoolean();
+        private final AtomicBoolean failNextDelete = new AtomicBoolean();
 
         @Override
         public StoredProfileImage store(Long memberId, ProfileImageUpload image) {
@@ -830,8 +1157,18 @@ class IdentityMariaDbIntegrationTest {
         }
 
         @Override
+        public boolean owns(Long memberId, String imageUrl) {
+            return imageUrl != null
+                    && imageUrl.startsWith("https://images.example/members/" + memberId + "/profile/");
+        }
+
+        @Override
         public void deleteOwnedImage(Long memberId, String imageUrl) {
-            if (imageUrl != null && imageUrl.startsWith("https://images.example/members/" + memberId + "/profile/")) {
+            deletedDuringTransaction.add(TransactionSynchronizationManager.isActualTransactionActive());
+            if (failNextDelete.getAndSet(false)) {
+                throw new IllegalStateException("cleanup unavailable");
+            }
+            if (owns(memberId, imageUrl)) {
                 deleted.add(imageUrl);
             }
         }
