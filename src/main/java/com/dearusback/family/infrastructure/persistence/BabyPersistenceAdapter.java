@@ -3,10 +3,15 @@ package com.dearusback.family.infrastructure.persistence;
 import com.dearusback.family.domain.model.Baby;
 import com.dearusback.family.domain.model.BabyMember;
 import com.dearusback.family.domain.repository.BabyRepository;
+import com.dearusback.family.domain.model.BabyMemberRole;
+import com.dearusback.family.domain.model.BabyMemberStatus;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -14,10 +19,13 @@ public class BabyPersistenceAdapter implements BabyRepository {
 
     private final SpringDataBabyRepository repository;
     private final SpringDataBabyMemberRepository memberships;
+    private final JdbcTemplate jdbc;
 
-    public BabyPersistenceAdapter(SpringDataBabyRepository repository, SpringDataBabyMemberRepository memberships) {
+    public BabyPersistenceAdapter(SpringDataBabyRepository repository, SpringDataBabyMemberRepository memberships,
+                                  JdbcTemplate jdbc) {
         this.repository = repository;
         this.memberships = memberships;
+        this.jdbc = jdbc;
     }
 
     @Override
@@ -84,5 +92,30 @@ public class BabyPersistenceAdapter implements BabyRepository {
             existing.reactivateAsCaregiver(target.joinedAt());
             memberships.flush();
         }
+    }
+
+    @Override
+    public Optional<BabyMember> findMemberForUpdate(Long babyId, Long memberId) {
+        // A current locking read must not reuse a stale BabyMember from JPA's first-level cache.
+        return jdbc.query("SELECT baby_member_id, member_id, role, status, joined_at, ended_at "
+                + "FROM baby_member WHERE baby_id = ? AND member_id = ? FOR UPDATE", result -> {
+            if (!result.next()) {
+                return Optional.empty();
+            }
+            LocalDateTime endedAt = result.getObject("ended_at", LocalDateTime.class);
+            return Optional.of(new BabyMember(result.getLong("baby_member_id"), result.getLong("member_id"),
+                    BabyMemberRole.valueOf(result.getString("role")),
+                    BabyMemberStatus.valueOf(result.getString("status")),
+                    result.getObject("joined_at", LocalDateTime.class).toInstant(ZoneOffset.UTC),
+                    endedAt == null ? null : endedAt.toInstant(ZoneOffset.UTC)));
+        }, babyId, memberId);
+    }
+
+    @Override
+    public int updateMembershipStatus(Long babyId, BabyMember changed) {
+        return jdbc.update("UPDATE baby_member SET status = ?, ended_at = ? WHERE baby_id = ? "
+                + "AND baby_member_id = ? AND member_id = ? AND role = 'CAREGIVER' AND status = 'ACTIVE'",
+                changed.status().name(), LocalDateTime.ofInstant(changed.endedAt(), ZoneOffset.UTC),
+                babyId, changed.id(), changed.memberId());
     }
 }

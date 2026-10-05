@@ -77,4 +77,9 @@ public class MemberPersistenceAdapter implements MemberRepository {
     public int clearLastSelectedBabyIfMatches(Long babyId) {
         return repository.clearLastSelectedBabyIfMatches(babyId);
     }
+
+    @Override
+    public int clearLastSelectedBabyIfMatches(Long memberId, Long babyId) {
+        return repository.clearLastSelectedBabyIfMatches(memberId, babyId);
+    }
 }

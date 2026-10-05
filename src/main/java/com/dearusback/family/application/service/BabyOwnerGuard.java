@@ -42,10 +42,8 @@ public class BabyOwnerGuard {
         Baby baby = (allMembers ? babies.findByIdAndAllMembersForUpdate(babyId)
                 : babies.findByIdForUpdate(babyId, memberId))
                 .orElseThrow(() -> new FamilyException(FamilyErrorCode.BABY_NOT_FOUND));
-        BabyMember membership = baby.members().stream()
-                .filter(related -> related.memberId().equals(memberId))
+        BabyMember membership = babies.findMemberForUpdate(babyId, memberId)
                 .filter(related -> related.status() == BabyMemberStatus.ACTIVE)
-                .findFirst()
                 .orElseThrow(() -> new FamilyException(FamilyErrorCode.BABY_NOT_FOUND));
         if (membership.role() != BabyMemberRole.OWNER) {
             throw new FamilyException(forbidden);

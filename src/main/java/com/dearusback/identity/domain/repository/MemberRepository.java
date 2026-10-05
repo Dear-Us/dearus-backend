@@ -23,4 +23,6 @@ public interface MemberRepository {
     int initializeLastSelectedBabyId(Long memberId, Long babyId);
 
     int clearLastSelectedBabyIfMatches(Long babyId);
+
+    int clearLastSelectedBabyIfMatches(Long memberId, Long babyId);
 }

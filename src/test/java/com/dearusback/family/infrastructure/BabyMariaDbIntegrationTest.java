@@ -1732,6 +1732,307 @@ class BabyMariaDbIntegrationTest {
                 + "AND member_id = ? AND status = 'ACTIVE'", Integer.class, baby, requester)).isZero();
     }
 
+    @Test
+    void ownerRemovalMarksCaregiverRemovedAndKeepsInvitationHistoryAndOtherMembers() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long target = insertMember("Asia/Seoul", false);
+        long other = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, other, "CAREGIVER", "ACTIVE");
+        JsonNode firstInvitation = createInvitation(Long.toString(baby), token(owner), 201);
+        assertThat(acceptInvitation(rawInvitationToken(firstInvitation), token(target), 200)
+                .path("data").path("status").asText()).isEqualTo("ACCEPTED");
+        long membershipId = jdbc.queryForObject("SELECT baby_member_id FROM baby_member "
+                + "WHERE baby_id = ? AND member_id = ?", Long.class, baby, target);
+        var before = membershipRow(baby, target);
+        var babyBefore = babyRow(baby);
+        var ownerBefore = membershipRow(baby, owner);
+        var otherBefore = membershipRow(baby, other);
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id IN (?, ?)",
+                baby, owner, other);
+
+        Instant removalStarted = Instant.now();
+        assertDeleted(removeCaregiver(Long.toString(baby), Long.toString(target), token(owner), 200));
+        var after = membershipRow(baby, target);
+        assertThat(after.get("role")).isEqualTo("CAREGIVER");
+        assertThat(after.get("status")).isEqualTo("REMOVED");
+        assertThat(after.get("joined_at")).isEqualTo(before.get("joined_at"));
+        assertThat(after.get("ended_at")).isNotNull();
+        assertThat(((Timestamp) after.get("ended_at")).toLocalDateTime().toInstant(ZoneOffset.UTC))
+                .isBetween(removalStarted, Instant.now());
+        assertThat(jdbc.queryForObject("SELECT baby_member_id FROM baby_member WHERE baby_id = ? "
+                + "AND member_id = ?", Long.class, baby, target)).isEqualTo(membershipId);
+        assertThat(selectedBaby(target)).isNull();
+        assertThat(selectedBaby(owner)).isEqualTo(baby);
+        assertThat(selectedBaby(other)).isEqualTo(baby);
+        assertThat(membershipRow(baby, owner)).isEqualTo(ownerBefore);
+        assertThat(membershipRow(baby, other)).isEqualTo(otherBefore);
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, firstInvitation.path("data").path("invitationId").asLong()))
+                .isEqualTo("ACCEPTED");
+        assertThat(listBabyMembers(Long.toString(baby), token(owner), 200).path("data").size()).isEqualTo(2);
+        assertThat(listBabies(token(target), 200).path("data").size()).isZero();
+        assertFailure(detailBaby(Long.toString(baby), token(target), 404));
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(target), token(owner), 404));
+
+        JsonNode renewed = createInvitation(Long.toString(baby), token(owner), 201);
+        assertThat(acceptInvitation(rawInvitationToken(renewed), token(target), 200)
+                .path("data").path("status").asText()).isEqualTo("ACCEPTED");
+        assertThat(jdbc.queryForObject("SELECT baby_member_id FROM baby_member WHERE baby_id = ? "
+                + "AND member_id = ?", Long.class, baby, target)).isEqualTo(membershipId);
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_member WHERE baby_id = ? "
+                + "AND member_id = ?", String.class, baby, target)).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void ownerRemovalPreservesDifferentSelectionAndRejectsInvalidTargetsAndAccess() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long target = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long outsider = insertMember("Asia/Seoul", false);
+        long left = insertMember("Asia/Seoul", false);
+        long removed = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        long otherBaby = insertBaby(owner, "다른 아기", "2020-01-01", "MALE", null, false, Instant.now());
+        long deleted = insertBaby(owner, "삭제", "2020-01-01", "MALE", null, true, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(otherBaby, owner, "OWNER", "ACTIVE");
+        insertMembership(deleted, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, target, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        insertMembership(otherBaby, outsider, "CAREGIVER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", otherBaby, target);
+        assertDeleted(removeCaregiver(Long.toString(baby), Long.toString(target), token(owner), 200));
+        assertThat(selectedBaby(target)).isEqualTo(otherBaby);
+
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(owner), token(owner), 409));
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(target), token(owner), 404));
+        for (long invalidTarget : new long[]{left, removed, outsider, Long.MAX_VALUE}) {
+            assertFailure(removeCaregiver(Long.toString(baby), Long.toString(invalidTarget),
+                    token(owner), 404));
+        }
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(caregiver), token(caregiver), 403));
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(caregiver), token(outsider), 404));
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(caregiver), token(left), 404));
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(caregiver), token(removed), 404));
+        assertFailure(removeCaregiver(Long.toString(deleted), Long.toString(caregiver), token(owner), 404));
+        assertFailure(removeCaregiver(Long.toString(Long.MAX_VALUE), Long.toString(caregiver),
+                token(owner), 404));
+        for (String invalid : List.of("0", "-1", "not-a-number")) {
+            assertFailure(removeCaregiver(invalid, Long.toString(caregiver), token(owner), 400));
+            assertFailure(removeCaregiver(Long.toString(baby), invalid, token(owner), 400));
+        }
+        for (String jwt : new String[]{null, "invalid.jwt", expiredToken(owner), token(Long.MAX_VALUE)}) {
+            assertFailure(removeCaregiver(Long.toString(baby), Long.toString(caregiver), jwt, 401));
+        }
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(caregiver),
+                token(insertMember("Asia/Seoul", true)), 403));
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_member WHERE baby_id = ? AND member_id = ?",
+                String.class, baby, caregiver)).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void caregiverLeaveMarksLeftAndSupportsLaterInvitationReactivation() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        JsonNode invitation = createInvitation(Long.toString(baby), token(owner), 201);
+        assertThat(acceptInvitation(rawInvitationToken(invitation), token(caregiver), 200)
+                .path("data").path("status").asText()).isEqualTo("ACCEPTED");
+        long membershipId = jdbc.queryForObject("SELECT baby_member_id FROM baby_member "
+                + "WHERE baby_id = ? AND member_id = ?", Long.class, baby, caregiver);
+        var before = membershipRow(baby, caregiver);
+        var babyBefore = babyRow(baby);
+        var ownerBefore = membershipRow(baby, owner);
+
+        Instant leaveStarted = Instant.now();
+        assertDeleted(leaveCaregiver(Long.toString(baby), token(caregiver), 200));
+        var after = membershipRow(baby, caregiver);
+        assertThat(after.get("status")).isEqualTo("LEFT");
+        assertThat(after.get("role")).isEqualTo("CAREGIVER");
+        assertThat(after.get("joined_at")).isEqualTo(before.get("joined_at"));
+        assertThat(after.get("ended_at")).isNotNull();
+        assertThat(((Timestamp) after.get("ended_at")).toLocalDateTime().toInstant(ZoneOffset.UTC))
+                .isBetween(leaveStarted, Instant.now());
+        assertThat(selectedBaby(caregiver)).isNull();
+        assertThat(membershipRow(baby, owner)).isEqualTo(ownerBefore);
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, invitation.path("data").path("invitationId").asLong())).isEqualTo("ACCEPTED");
+        assertThat(listBabyMembers(Long.toString(baby), token(owner), 200).path("data").size()).isEqualTo(1);
+        assertThat(listBabies(token(caregiver), 200).path("data").size()).isZero();
+        assertFailure(detailBaby(Long.toString(baby), token(caregiver), 404));
+        assertFailure(leaveCaregiver(Long.toString(baby), token(caregiver), 404));
+
+        JsonNode renewed = createInvitation(Long.toString(baby), token(owner), 201);
+        assertThat(acceptInvitation(rawInvitationToken(renewed), token(caregiver), 200)
+                .path("data").path("status").asText()).isEqualTo("ACCEPTED");
+        assertThat(jdbc.queryForObject("SELECT baby_member_id FROM baby_member WHERE baby_id = ? "
+                + "AND member_id = ?", Long.class, baby, caregiver)).isEqualTo(membershipId);
+    }
+
+    @Test
+    void caregiverLeavePreservesDifferentSelectionAndRejectsOwnerAndInaccessibleBabies() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long outsider = insertMember("Asia/Seoul", false);
+        long left = insertMember("Asia/Seoul", false);
+        long removed = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        long otherBaby = insertBaby(owner, "다른 아기", "2020-01-01", "MALE", null, false, Instant.now());
+        long deleted = insertBaby(owner, "삭제", "2020-01-01", "MALE", null, true, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(otherBaby, owner, "OWNER", "ACTIVE");
+        insertMembership(deleted, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", otherBaby, caregiver);
+
+        assertDeleted(leaveCaregiver(Long.toString(baby), token(caregiver), 200));
+        assertThat(selectedBaby(caregiver)).isEqualTo(otherBaby);
+        assertFailure(leaveCaregiver(Long.toString(baby), token(owner), 409));
+        for (long requester : new long[]{caregiver, outsider, left, removed}) {
+            assertFailure(leaveCaregiver(Long.toString(baby), token(requester), 404));
+        }
+        assertFailure(leaveCaregiver(Long.toString(deleted), token(owner), 404));
+        assertFailure(leaveCaregiver(Long.toString(Long.MAX_VALUE), token(owner), 404));
+        for (String invalid : List.of("0", "-1", "not-a-number")) {
+            assertFailure(leaveCaregiver(invalid, token(owner), 400));
+        }
+        for (String jwt : new String[]{null, "invalid.jwt", expiredToken(owner), token(Long.MAX_VALUE)}) {
+            assertFailure(leaveCaregiver(Long.toString(baby), jwt, 401));
+        }
+        assertFailure(leaveCaregiver(Long.toString(baby), token(insertMember("Asia/Seoul", true)), 403));
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_member WHERE baby_id = ? AND member_id = ?",
+                String.class, baby, owner)).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void membershipEndingRollsBackIfTargetSelectionCannotBeCleared() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long target = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, target, "CAREGIVER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", baby, target);
+        var before = membershipRow(baby, target);
+        jdbc.execute("CREATE TRIGGER baby_member_end_reject_clear BEFORE UPDATE ON member "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced selection clear failure'");
+        try {
+            assertFailure(removeCaregiver(Long.toString(baby), Long.toString(target), token(owner), 500));
+            assertThat(membershipRow(baby, target)).isEqualTo(before);
+            assertThat(selectedBaby(target)).isEqualTo(baby);
+            assertFailure(leaveCaregiver(Long.toString(baby), token(target), 500));
+            assertThat(membershipRow(baby, target)).isEqualTo(before);
+            assertThat(selectedBaby(target)).isEqualTo(baby);
+        } finally {
+            jdbc.execute("DROP TRIGGER baby_member_end_reject_clear");
+        }
+    }
+
+    @Test
+    void concurrentRemovalAndSelfLeaveEndExactlyOnce() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", baby, caregiver);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Integer> removal = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return removeCaregiverStatus(baby, caregiver, token(owner));
+            });
+            Future<Integer> leaving = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return leaveCaregiverStatus(baby, token(caregiver));
+            });
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(List.of(removal.get(20, TimeUnit.SECONDS), leaving.get(20, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(200, 404);
+        }
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_member WHERE baby_id = ? AND member_id = ?",
+                String.class, baby, caregiver)).isIn("REMOVED", "LEFT");
+        assertThat(jdbc.queryForObject("SELECT ended_at FROM baby_member WHERE baby_id = ? AND member_id = ?",
+                Timestamp.class, baby, caregiver)).isNotNull();
+        assertThat(selectedBaby(caregiver)).isNull();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_member WHERE baby_id = ? AND member_id = ?",
+                Integer.class, baby, caregiver)).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentBabyDeletionAndCaregiverLeaveCannotPreserveActiveRelationship() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", baby, caregiver);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Integer> leaving = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return leaveCaregiverStatus(baby, token(caregiver));
+            });
+            Future<Integer> deletion = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return deleteStatus(baby, token(owner));
+            });
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(leaving.get(20, TimeUnit.SECONDS)).isIn(200, 404);
+            assertThat(deletion.get(20, TimeUnit.SECONDS)).isEqualTo(200);
+        }
+        assertThat(jdbc.queryForObject("SELECT is_deleted FROM baby WHERE baby_id = ?",
+                Boolean.class, baby)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_member WHERE baby_id = ? "
+                + "AND status = 'ACTIVE'", Integer.class, baby)).isZero();
+        assertThat(selectedBaby(caregiver)).isNull();
+    }
+
+    private JsonNode removeCaregiver(String babyId, String targetId, String jwt, int expectedStatus)
+            throws Exception {
+        var request = delete("/api/v1/babies/{babyId}/members/{memberId}", babyId, targetId);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private JsonNode leaveCaregiver(String babyId, String jwt, int expectedStatus) throws Exception {
+        var request = delete("/api/v1/babies/{babyId}/members/me", babyId);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private int removeCaregiverStatus(long babyId, long targetId, String jwt) throws Exception {
+        return mvc.perform(delete("/api/v1/babies/{babyId}/members/{memberId}", babyId, targetId)
+                .header("Authorization", "Bearer " + jwt)).andReturn().getResponse().getStatus();
+    }
+
+    private int leaveCaregiverStatus(long babyId, String jwt) throws Exception {
+        return mvc.perform(delete("/api/v1/babies/{babyId}/members/me", babyId)
+                .header("Authorization", "Bearer " + jwt)).andReturn().getResponse().getStatus();
+    }
+
     private void assertFailedAcceptRolledBack(JsonNode created, long babyId, long requester) {
         long invitationId = created.path("data").path("invitationId").asLong();
         assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",

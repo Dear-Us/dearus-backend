@@ -1,6 +1,7 @@
 package com.dearusback.family.domain.repository;
 
 import com.dearusback.family.domain.model.Baby;
+import com.dearusback.family.domain.model.BabyMember;
 import java.util.Optional;
 
 public interface BabyRepository {
@@ -15,4 +16,8 @@ public interface BabyRepository {
     void markDeleted(Baby baby);
 
     void saveCaregiverMembership(Baby baby, Long memberId);
+
+    Optional<BabyMember> findMemberForUpdate(Long babyId, Long memberId);
+
+    int updateMembershipStatus(Long babyId, BabyMember changed);
 }

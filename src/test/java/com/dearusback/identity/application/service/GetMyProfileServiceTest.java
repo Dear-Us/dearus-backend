@@ -99,6 +99,11 @@ class GetMyProfileServiceTest {
             public int clearLastSelectedBabyIfMatches(Long babyId) {
                 throw new UnsupportedOperationException();
             }
+
+            @Override
+            public int clearLastSelectedBabyIfMatches(Long memberId, Long babyId) {
+                throw new UnsupportedOperationException();
+            }
         };
     }
 }

@@ -19,6 +19,20 @@ public record BabyMember(Long id, Long memberId, BabyMemberRole role, BabyMember
                 : this;
     }
 
+    public BabyMember removeCaregiver(Instant now) {
+        if (role != BabyMemberRole.CAREGIVER || status != BabyMemberStatus.ACTIVE) {
+            throw new IllegalStateException("Only an active caregiver can be removed");
+        }
+        return new BabyMember(id, memberId, role, BabyMemberStatus.REMOVED, joinedAt, now);
+    }
+
+    public BabyMember leaveCaregiver(Instant now) {
+        if (role != BabyMemberRole.CAREGIVER || status != BabyMemberStatus.ACTIVE) {
+            throw new IllegalStateException("Only an active caregiver can leave");
+        }
+        return new BabyMember(id, memberId, role, BabyMemberStatus.LEFT, joinedAt, now);
+    }
+
     public static BabyMember joinAsCaregiver(Long memberId, Instant now) {
         return new BabyMember(null, memberId, BabyMemberRole.CAREGIVER,
                 BabyMemberStatus.ACTIVE, now, null);

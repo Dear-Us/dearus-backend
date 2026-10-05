@@ -11,4 +11,6 @@ public interface BabyRegistrationMemberAccess {
     void initializeLastSelectedBabyIdIfAbsent(Long memberId, Long babyId);
 
     void clearLastSelectedBabyIfMatches(Long babyId);
+
+    void clearLastSelectedBabyIfMatches(Long memberId, Long babyId);
 }
