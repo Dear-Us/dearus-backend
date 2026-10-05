@@ -4,11 +4,9 @@ import com.dearusback.family.application.model.MyBabySummary;
 import com.dearusback.family.application.model.UpdateBabyCommand;
 import com.dearusback.family.application.port.in.UpdateBabyUseCase;
 import com.dearusback.family.application.port.out.BabyProfileImageStoragePort;
-import com.dearusback.family.application.port.out.BabyQueryPort;
 import com.dearusback.family.domain.exception.FamilyErrorCode;
 import com.dearusback.family.domain.exception.FamilyException;
 import com.dearusback.family.domain.model.BabyGender;
-import com.dearusback.family.domain.model.BabyMemberRole;
 import com.dearusback.identity.application.model.BabyRegistrationMember;
 import com.dearusback.identity.application.port.in.BabyRegistrationMemberAccess;
 import java.time.Clock;
@@ -22,16 +20,16 @@ public class UpdateBabyService implements UpdateBabyUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(UpdateBabyService.class);
     private final BabyRegistrationMemberAccess members;
-    private final BabyQueryPort babies;
+    private final BabyOwnerGuard owners;
     private final BabyProfileImageStoragePort storage;
     private final UpdateBabyTransactionService transaction;
     private final Clock clock;
 
-    public UpdateBabyService(BabyRegistrationMemberAccess members, BabyQueryPort babies,
+    public UpdateBabyService(BabyRegistrationMemberAccess members, BabyOwnerGuard owners,
                              BabyProfileImageStoragePort storage, UpdateBabyTransactionService transaction,
                              Clock clock) {
         this.members = members;
-        this.babies = babies;
+        this.owners = owners;
         this.storage = storage;
         this.transaction = transaction;
         this.clock = clock;
@@ -43,11 +41,7 @@ public class UpdateBabyService implements UpdateBabyUseCase {
             throw new FamilyException(FamilyErrorCode.INVALID_BABY_UPDATE);
         }
         BabyRegistrationMember member = members.requireActiveMember(command.memberId());
-        MyBabySummary accessible = babies.findAccessibleBaby(command.memberId(), command.babyId())
-                .orElseThrow(() -> new FamilyException(FamilyErrorCode.BABY_NOT_FOUND));
-        if (accessible.myRole() != BabyMemberRole.OWNER) {
-            throw new FamilyException(FamilyErrorCode.BABY_UPDATE_FORBIDDEN);
-        }
+        owners.requireOwner(command.memberId(), command.babyId(), FamilyErrorCode.BABY_UPDATE_FORBIDDEN);
         if (command.babyName() == null && command.birthDate() == null && command.gender() == null
                 && command.profileImage() == null && !command.removeProfileImage()) {
             throw new FamilyException(FamilyErrorCode.INVALID_BABY_UPDATE);

@@ -1,6 +1,7 @@
 package com.dearusback.family.infrastructure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -11,12 +12,17 @@ import com.dearusback.DearUsBackApplication;
 import com.dearusback.family.application.model.BabyImageUpload;
 import com.dearusback.family.application.port.out.BabyProfileImageStoragePort;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -32,6 +38,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -67,6 +74,7 @@ class BabyMariaDbIntegrationTest {
         properties.add("spring.datasource.username", MARIADB::getUsername);
         properties.add("spring.datasource.password", MARIADB::getPassword);
         properties.add("spring.datasource.driver-class-name", () -> "org.mariadb.jdbc.Driver");
+        properties.add("dearus.invitation.base-url", () -> "https://app.example.com/invite");
     }
 
     @Autowired MockMvc mvc;
@@ -89,7 +97,7 @@ class BabyMariaDbIntegrationTest {
                 .isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM information_schema.tables "
                 + "WHERE table_schema = database() AND table_name = 'baby_invitation'", Integer.class))
-                .isZero();
+                .isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM information_schema.table_constraints "
                 + "WHERE constraint_schema = database() AND table_name = 'baby_member' "
                 + "AND constraint_type = 'UNIQUE'", Integer.class)).isEqualTo(1);
@@ -1039,6 +1047,208 @@ class BabyMariaDbIntegrationTest {
         assertThat(babyRow(baby)).isEqualTo(babyBefore);
         assertThat(memberStateRow(withdrawn)).isEqualTo(withdrawnBefore);
         assertThat(membershipRow(baby, withdrawn)).isEqualTo(membershipBefore);
+    }
+
+    @Test
+    void invitationMigrationCreatesHashedTokenTableAndUniqueConstraint() {
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history "
+                + "WHERE version = '4' AND success = 1", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_schema.tables "
+                + "WHERE table_schema = database() AND table_name = 'baby_invitation'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_schema.columns "
+                + "WHERE table_schema = database() AND table_name = 'baby_invitation' "
+                + "AND column_name IN ('raw_token', 'token')", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_schema.statistics "
+                + "WHERE table_schema = database() AND table_name = 'baby_invitation' "
+                + "AND index_name = 'uk_baby_invitation_token_hash' AND non_unique = 0", Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void ownerCreatesMultiplePendingCaregiverInvitationsWithSecureHashedTokens() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        Instant now = Instant.now();
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, now);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", baby, owner);
+        var babyBefore = babyRow(baby);
+        var ownerBefore = membershipRow(baby, owner);
+        var caregiverBefore = membershipRow(baby, caregiver);
+        String jwt = token(owner);
+
+        JsonNode first = createInvitation(Long.toString(baby), jwt, 201);
+        JsonNode second = createInvitation(Long.toString(baby), jwt, 201);
+
+        assertInvitationResponse(first);
+        assertInvitationResponse(second);
+        long firstId = first.path("data").path("invitationId").asLong();
+        long secondId = second.path("data").path("invitationId").asLong();
+        assertThat(firstId).isNotEqualTo(secondId);
+        String firstRaw = rawInvitationToken(first);
+        String secondRaw = rawInvitationToken(second);
+        assertThat(firstRaw).isNotEqualTo(secondRaw);
+        assertThat(Base64.getUrlDecoder().decode(firstRaw)).hasSize(32);
+        assertThat(Base64.getUrlDecoder().decode(secondRaw)).hasSize(32);
+        assertInvitationRow(firstId, baby, owner, firstRaw, first);
+        assertInvitationRow(secondId, baby, owner, secondRaw, second);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_invitation "
+                + "WHERE baby_id = ? AND status = 'PENDING'", Integer.class, baby)).isEqualTo(2);
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(membershipRow(baby, owner)).isEqualTo(ownerBefore);
+        assertThat(membershipRow(baby, caregiver)).isEqualTo(caregiverBefore);
+        assertThat(selectedBaby(owner)).isEqualTo(baby);
+        assertThat(selectedBaby(caregiver)).isNull();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_member WHERE baby_id = ?", Integer.class, baby))
+                .isEqualTo(2);
+    }
+
+    @Test
+    void invitationTokenHashUniqueConstraintRejectsDuplicate() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        String fixedTestHash = "f".repeat(64);
+        Instant now = Instant.now();
+        jdbc.update("INSERT INTO baby_invitation "
+                + "(baby_id, created_by_member_id, token_hash, role, status, expires_at, "
+                + "created_at, updated_at) VALUES (?, ?, ?, 'CAREGIVER', 'PENDING', ?, ?, ?)",
+                baby, owner, fixedTestHash, Timestamp.from(now.plusSeconds(72 * 3600)),
+                Timestamp.from(now), Timestamp.from(now));
+
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO baby_invitation "
+                + "(baby_id, created_by_member_id, token_hash, role, status, expires_at, "
+                + "created_at, updated_at) SELECT baby_id, created_by_member_id, token_hash, "
+                + "role, status, expires_at, created_at, updated_at "
+                + "FROM baby_invitation WHERE token_hash = ?", fixedTestHash))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_invitation WHERE baby_id = ?",
+                Integer.class, baby)).isEqualTo(1);
+    }
+
+    @Test
+    void invitationCreationRequiresActiveOwnerAndHidesInaccessibleBabies() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long outsider = insertMember("Asia/Seoul", false);
+        long left = insertMember("Asia/Seoul", false);
+        long removed = insertMember("Asia/Seoul", false);
+        Instant now = Instant.now();
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, now);
+        long deleted = insertBaby(owner, "삭제", "2020-01-01", "MALE", null, true, now);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        insertMembership(deleted, owner, "OWNER", "ACTIVE");
+
+        assertFailure(createInvitation(Long.toString(baby), token(caregiver), 403));
+        for (long requester : new long[]{outsider, left, removed}) {
+            JsonNode response = createInvitation(Long.toString(baby), token(requester), 404);
+            assertFailure(response);
+            assertThat(response.path("message").asText()).isEqualTo("아기 정보를 찾을 수 없습니다.");
+        }
+        for (long unavailable : new long[]{Long.MAX_VALUE, deleted}) {
+            JsonNode response = createInvitation(Long.toString(unavailable), token(owner), 404);
+            assertFailure(response);
+            assertThat(response.path("message").asText()).isEqualTo("아기 정보를 찾을 수 없습니다.");
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_invitation WHERE baby_id IN (?, ?)",
+                Integer.class, baby, deleted)).isZero();
+    }
+
+    @Test
+    void invitationCreationValidatesPathAndAuthentication() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        for (String invalid : List.of("0", "-1", "not-a-number")) {
+            assertFailure(createInvitation(invalid, token(owner), 400));
+        }
+        assertFailure(createInvitation(Long.toString(baby), null, 401));
+        assertFailure(createInvitation(Long.toString(baby), "invalid.jwt", 401));
+        assertFailure(createInvitation(Long.toString(baby), token(Long.MAX_VALUE), 401));
+        assertFailure(createInvitation(Long.toString(baby), token(insertMember("Asia/Seoul", true)), 403));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_invitation WHERE baby_id = ?",
+                Integer.class, baby)).isZero();
+    }
+
+    @Test
+    void invitationInsertFailureReturns500WithoutChangingBabyOrMembership() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        var babyBefore = babyRow(baby);
+        var membershipBefore = membershipRow(baby, owner);
+        jdbc.execute("CREATE TRIGGER invitation01_reject_insert BEFORE INSERT ON baby_invitation "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced invitation failure'");
+        try {
+            assertFailure(createInvitation(Long.toString(baby), token(owner), 500));
+        } finally {
+            jdbc.execute("DROP TRIGGER invitation01_reject_insert");
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_invitation WHERE baby_id = ?",
+                Integer.class, baby)).isZero();
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(membershipRow(baby, owner)).isEqualTo(membershipBefore);
+        assertThat(selectedBaby(owner)).isNull();
+    }
+
+    private JsonNode createInvitation(String babyId, String jwt, int expectedStatus) throws Exception {
+        var request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .post("/api/v1/babies/{babyId}/invitations", babyId);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        String response = mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString();
+        return mapper.readTree(response);
+    }
+
+    private void assertInvitationResponse(JsonNode response) {
+        assertThat(response.size()).isEqualTo(3);
+        assertThat(response.path("success").asBoolean()).isTrue();
+        assertThat(response.path("message").isNull()).isTrue();
+        assertThat(response.has("errorCode")).isFalse();
+        JsonNode data = response.path("data");
+        assertThat(data.size()).isEqualTo(5);
+        assertThat(data.path("invitationId").asLong()).isPositive();
+        assertThat(data.path("role").asText()).isEqualTo("CAREGIVER");
+        assertThat(data.path("status").asText()).isEqualTo("PENDING");
+        assertThat(data.path("invitationUrl").asText()).startsWith("https://app.example.com/invite?token=");
+        assertThat(data.has("tokenHash")).isFalse();
+        assertThat(data.has("token")).isFalse();
+        assertThat(OffsetDateTime.parse(data.path("expiresAt").asText()).getOffset().getTotalSeconds())
+                .isEqualTo(9 * 3600);
+    }
+
+    private String rawInvitationToken(JsonNode response) {
+        return response.path("data").path("invitationUrl").asText()
+                .substring("https://app.example.com/invite?token=".length());
+    }
+
+    private void assertInvitationRow(long invitationId, long babyId, long ownerId, String rawToken,
+                                     JsonNode response) throws Exception {
+        var row = jdbc.queryForMap("SELECT baby_id, created_by_member_id, token_hash, role, status, "
+                + "expires_at, accepted_by_member_id, accepted_at, canceled_at, created_at, updated_at "
+                + "FROM baby_invitation WHERE invitation_id = ?", invitationId);
+        assertThat(row.get("baby_id")).isEqualTo(babyId);
+        assertThat(row.get("created_by_member_id")).isEqualTo(ownerId);
+        assertThat(row.get("role")).isEqualTo("CAREGIVER");
+        assertThat(row.get("status")).isEqualTo("PENDING");
+        assertThat(row.get("accepted_by_member_id")).isNull();
+        assertThat(row.get("accepted_at")).isNull();
+        assertThat(row.get("canceled_at")).isNull();
+        assertThat(row.get("token_hash")).isEqualTo(HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(rawToken.getBytes(StandardCharsets.UTF_8))));
+        assertThat(row.get("token_hash")).isNotEqualTo(rawToken);
+        Instant createdAt = ((Timestamp) row.get("created_at")).toLocalDateTime().toInstant(ZoneOffset.UTC);
+        Instant expiresAt = ((Timestamp) row.get("expires_at")).toLocalDateTime().toInstant(ZoneOffset.UTC);
+        assertThat(expiresAt).isEqualTo(createdAt.plusSeconds(72 * 3600));
+        assertThat(OffsetDateTime.parse(response.path("data").path("expiresAt").asText()).toInstant())
+                .isEqualTo(expiresAt);
     }
 
     private JsonNode listBabyMembers(String babyId, String jwt, int expectedStatus) throws Exception {

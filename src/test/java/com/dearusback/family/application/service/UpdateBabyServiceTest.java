@@ -17,6 +17,7 @@ import com.dearusback.family.application.port.out.BabyQueryPort;
 import com.dearusback.family.domain.exception.FamilyErrorCode;
 import com.dearusback.family.domain.model.BabyGender;
 import com.dearusback.family.domain.model.BabyMemberRole;
+import com.dearusback.family.domain.repository.BabyRepository;
 import com.dearusback.identity.application.model.BabyRegistrationMember;
 import com.dearusback.identity.application.port.in.BabyRegistrationMemberAccess;
 import com.dearusback.support.domain.exception.BusinessException;
@@ -32,9 +33,10 @@ class UpdateBabyServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-08-15T15:30:00Z"), ZoneOffset.UTC);
     private final BabyRegistrationMemberAccess members = mock(BabyRegistrationMemberAccess.class);
     private final BabyQueryPort babies = mock(BabyQueryPort.class);
+    private final BabyOwnerGuard owners = new BabyOwnerGuard(babies, mock(BabyRepository.class));
     private final BabyProfileImageStoragePort storage = mock(BabyProfileImageStoragePort.class);
     private final UpdateBabyTransactionService transaction = mock(UpdateBabyTransactionService.class);
-    private final UpdateBabyService service = new UpdateBabyService(members, babies, storage, transaction, CLOCK);
+    private final UpdateBabyService service = new UpdateBabyService(members, owners, storage, transaction, CLOCK);
 
     @Test
     void acceptsMembersLocalTodayAcrossUtcMidnight() {
