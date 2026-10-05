@@ -29,6 +29,11 @@ public class BabyRegistrationMemberService implements BabyRegistrationMemberAcce
     }
 
     @Override
+    public boolean isActiveMember(Long memberId) {
+        return members.findById(memberId).filter(member -> !member.isDeleted()).isPresent();
+    }
+
+    @Override
     public void initializeLastSelectedBabyIdIfAbsent(Long memberId, Long babyId) {
         members.initializeLastSelectedBabyId(memberId, babyId);
     }

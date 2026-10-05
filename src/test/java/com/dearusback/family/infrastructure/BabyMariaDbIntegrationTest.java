@@ -2004,6 +2004,272 @@ class BabyMariaDbIntegrationTest {
         assertThat(selectedBaby(caregiver)).isNull();
     }
 
+    @Test
+    void ownershipTransferSwapsRolesWithoutChangingMembershipOrInvitationAndUpdatesPermissions() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long invitee = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id IN (?, ?)", baby, owner, caregiver);
+        JsonNode invitation = createInvitation(Long.toString(baby), token(owner), 201);
+        long invitationId = invitation.path("data").path("invitationId").asLong();
+        var babyBefore = babyRow(baby);
+        var oldOwnerBefore = membershipRow(baby, owner);
+        var newOwnerBefore = membershipRow(baby, caregiver);
+        long oldRowId = membershipId(baby, owner);
+        long newRowId = membershipId(baby, caregiver);
+
+        JsonNode response = transferOwner(Long.toString(baby), token(owner),
+                "{\"memberId\":" + caregiver + "}", 200);
+        assertThat(response.size()).isEqualTo(3);
+        assertThat(response.path("success").asBoolean()).isTrue();
+        assertThat(response.path("message").isNull()).isTrue();
+        assertThat(response.has("errorCode")).isFalse();
+        assertThat(response.path("data").size()).isEqualTo(3);
+        assertThat(response.path("data").path("babyId").asLong()).isEqualTo(baby);
+        assertThat(response.path("data").path("previousOwnerMemberId").asLong()).isEqualTo(owner);
+        assertThat(response.path("data").path("ownerMemberId").asLong()).isEqualTo(caregiver);
+        assertThat(membershipRow(baby, owner)).containsEntry("role", "CAREGIVER")
+                .containsEntry("joined_at", oldOwnerBefore.get("joined_at"))
+                .containsEntry("ended_at", oldOwnerBefore.get("ended_at"));
+        assertThat(membershipRow(baby, caregiver)).containsEntry("role", "OWNER")
+                .containsEntry("joined_at", newOwnerBefore.get("joined_at"))
+                .containsEntry("ended_at", newOwnerBefore.get("ended_at"));
+        assertThat(membershipRow(baby, owner).get("status")).isEqualTo("ACTIVE");
+        assertThat(membershipRow(baby, caregiver).get("status")).isEqualTo("ACTIVE");
+        assertThat(membershipId(baby, owner)).isEqualTo(oldRowId);
+        assertThat(membershipId(baby, caregiver)).isEqualTo(newRowId);
+        assertThat(activeOwnerCount(baby)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_member WHERE baby_id = ?", Integer.class, baby))
+                .isEqualTo(2);
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(selectedBaby(owner)).isEqualTo(baby);
+        assertThat(selectedBaby(caregiver)).isEqualTo(baby);
+        assertThat(jdbc.queryForMap("SELECT status, created_by_member_id FROM baby_invitation "
+                + "WHERE invitation_id = ?", invitationId))
+                .containsEntry("status", "PENDING").containsEntry("created_by_member_id", owner);
+
+        JsonNode listed = listBabyMembers(Long.toString(baby), token(owner), 200).path("data");
+        assertThat(listed.size()).isEqualTo(2);
+        assertThat(listed.get(0).path("memberId").asLong()).isEqualTo(caregiver);
+        assertThat(listed.get(0).path("role").asText()).isEqualTo("OWNER");
+        assertThat(listed.get(1).path("memberId").asLong()).isEqualTo(owner);
+        assertThat(listed.get(1).path("role").asText()).isEqualTo("CAREGIVER");
+        assertFailure(patchBaby(Long.toString(baby), token(owner), "{\"babyName\":\"변경\"}", null, 403));
+        assertFailure(deleteBaby(Long.toString(baby), token(owner), 403));
+        assertFailure(createInvitation(Long.toString(baby), token(owner), 403));
+        assertFailure(removeCaregiver(Long.toString(baby), Long.toString(caregiver), token(owner), 403));
+        assertFailure(transferOwner(Long.toString(baby), token(owner),
+                "{\"memberId\":" + caregiver + "}", 403));
+        assertThat(detailBaby(Long.toString(baby), token(owner), 200).path("data").path("myRole").asText())
+                .isEqualTo("CAREGIVER");
+        assertThat(patchBaby(Long.toString(baby), token(caregiver),
+                "{\"babyName\":\"새 이름\"}", null, 200).path("data").path("myRole").asText())
+                .isEqualTo("OWNER");
+        assertThat(createInvitation(Long.toString(baby), token(caregiver), 201)
+                .path("data").path("invitationId").asLong()).isPositive();
+        assertThat(acceptInvitation(rawInvitationToken(invitation), token(invitee), 200)
+                .path("data").path("status").asText()).isEqualTo("ACCEPTED");
+    }
+
+    @Test
+    void ownershipTransferRejectsInvalidRequesterTargetAndBody() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long outsider = insertMember("Asia/Seoul", false);
+        long left = insertMember("Asia/Seoul", false);
+        long removed = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        long deleted = insertBaby(owner, "삭제", "2020-01-01", "MALE", null, true, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        insertMembership(deleted, owner, "OWNER", "ACTIVE");
+        var ownerBefore = membershipRow(baby, owner);
+        var caregiverBefore = membershipRow(baby, caregiver);
+        String target = "{\"memberId\":" + caregiver + "}";
+        assertFailure(transferOwner(Long.toString(baby), token(caregiver), target, 403));
+        for (long requester : new long[]{outsider, left, removed}) {
+            assertFailure(transferOwner(Long.toString(baby), token(requester), target, 404));
+        }
+        for (long absent : new long[]{outsider, left, removed, Long.MAX_VALUE}) {
+            assertFailure(transferOwner(Long.toString(baby), token(owner),
+                    "{\"memberId\":" + absent + "}", 404));
+        }
+        assertFailure(transferOwner(Long.toString(baby), token(owner),
+                "{\"memberId\":" + owner + "}", 409));
+        assertFailure(transferOwner(Long.toString(deleted), token(owner), target, 404));
+        assertFailure(transferOwner(Long.toString(Long.MAX_VALUE), token(owner), target, 404));
+        for (String invalid : List.of("0", "-1", "invalid")) {
+            assertFailure(transferOwner(invalid, token(owner), target, 400));
+        }
+        for (String invalid : List.of("{}", "{\"memberId\":null}", "{\"memberId\":0}",
+                "{\"memberId\":-1}", "{\"memberId\":\"invalid\"}", "{invalid")) {
+            assertFailure(transferOwner(Long.toString(baby), token(owner), invalid, 400));
+        }
+        for (String jwt : new String[]{null, "invalid.jwt", expiredToken(owner), token(Long.MAX_VALUE)}) {
+            assertFailure(transferOwner(Long.toString(baby), jwt, target, 401));
+        }
+        assertFailure(transferOwner(Long.toString(baby), token(insertMember("Asia/Seoul", true)), target, 403));
+        assertThat(membershipRow(baby, owner)).isEqualTo(ownerBefore);
+        assertThat(membershipRow(baby, caregiver)).isEqualTo(caregiverBefore);
+    }
+
+    @Test
+    void ownershipTransferRejectsInactiveTargetMemberAsIntegrityFailure() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", true);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        assertFailure(transferOwner(Long.toString(baby), token(owner),
+                "{\"memberId\":" + caregiver + "}", 500));
+        assertOwner(baby, owner);
+        assertThat(activeOwnerCount(baby)).isEqualTo(1);
+    }
+
+    @Test
+    void ownershipTransferRollsBackDemotionWhenPromotionFails() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        var ownerBefore = membershipRow(baby, owner);
+        var caregiverBefore = membershipRow(baby, caregiver);
+        jdbc.execute("CREATE TRIGGER baby_owner_transfer_reject_promotion BEFORE UPDATE ON baby_member "
+                + "FOR EACH ROW BEGIN IF OLD.role = 'CAREGIVER' AND NEW.role = 'OWNER' THEN "
+                + "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced promotion failure'; END IF; END");
+        try {
+            assertFailure(transferOwner(Long.toString(baby), token(owner),
+                    "{\"memberId\":" + caregiver + "}", 500));
+        } finally {
+            jdbc.execute("DROP TRIGGER baby_owner_transfer_reject_promotion");
+        }
+        assertThat(membershipRow(baby, owner)).isEqualTo(ownerBefore);
+        assertThat(membershipRow(baby, caregiver)).isEqualTo(caregiverBefore);
+        assertThat(activeOwnerCount(baby)).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentOwnershipTransfersAllowExactlyOneNewOwner() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long first = insertMember("Asia/Seoul", false);
+        long second = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, first, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, second, "CAREGIVER", "ACTIVE");
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Integer> toFirst = executor.submit(() -> transferOwnerWhenStarted(baby, first, token(owner),
+                    ready, start));
+            Future<Integer> toSecond = executor.submit(() -> transferOwnerWhenStarted(baby, second, token(owner),
+                    ready, start));
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(List.of(toFirst.get(20, TimeUnit.SECONDS), toSecond.get(20, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(200, 403);
+        }
+        assertThat(activeOwnerCount(baby)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT member_id FROM baby_member WHERE baby_id = ? "
+                + "AND role = 'OWNER' AND status = 'ACTIVE'", Long.class, baby)).isIn(first, second);
+    }
+
+    @Test
+    void concurrentOwnershipTransferAndTargetLeaveNeverPromoteInactiveMembership() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Integer> transfer = executor.submit(() -> transferOwnerWhenStarted(baby, caregiver,
+                    token(owner), ready, start));
+            Future<Integer> leaving = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return leaveCaregiverStatus(baby, token(caregiver));
+            });
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            int transferStatus = transfer.get(20, TimeUnit.SECONDS);
+            int leaveStatus = leaving.get(20, TimeUnit.SECONDS);
+            assertThat(List.of(transferStatus, leaveStatus)).isIn(List.of(200, 409), List.of(404, 200));
+        }
+        assertThat(activeOwnerCount(baby)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_member WHERE baby_id = ? "
+                + "AND role = 'OWNER' AND status <> 'ACTIVE'", Integer.class, baby)).isZero();
+    }
+
+    @Test
+    void concurrentOwnershipTransferAndBabyDeleteCannotTransferOnDeletedBaby() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Integer> transfer = executor.submit(() -> transferOwnerWhenStarted(baby, caregiver,
+                    token(owner), ready, start));
+            Future<Integer> deletion = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return deleteStatus(baby, token(owner));
+            });
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            int transferStatus = transfer.get(20, TimeUnit.SECONDS);
+            int deleteStatus = deletion.get(20, TimeUnit.SECONDS);
+            assertThat(List.of(transferStatus, deleteStatus)).isIn(List.of(200, 403), List.of(404, 200));
+        }
+        boolean deleted = jdbc.queryForObject("SELECT is_deleted FROM baby WHERE baby_id = ?",
+                Boolean.class, baby);
+        if (deleted) {
+            assertThat(activeOwnerCount(baby)).isZero();
+        } else {
+            assertThat(activeOwnerCount(baby)).isEqualTo(1);
+            assertOwner(baby, caregiver);
+        }
+    }
+
+    private JsonNode transferOwner(String babyId, String jwt, String json, int expectedStatus) throws Exception {
+        var request = patch("/api/v1/babies/{babyId}/owner", babyId)
+                .contentType(MediaType.APPLICATION_JSON).content(json);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private int transferOwnerWhenStarted(long babyId, long targetId, String jwt, CountDownLatch ready,
+                                         CountDownLatch start) throws Exception {
+        ready.countDown();
+        start.await();
+        return mvc.perform(patch("/api/v1/babies/{babyId}/owner", babyId)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"memberId\":" + targetId + "}")
+                .header("Authorization", "Bearer " + jwt)).andReturn().getResponse().getStatus();
+    }
+
+    private long membershipId(long babyId, long memberId) {
+        return jdbc.queryForObject("SELECT baby_member_id FROM baby_member WHERE baby_id = ? AND member_id = ?",
+                Long.class, babyId, memberId);
+    }
+
+    private int activeOwnerCount(long babyId) {
+        return jdbc.queryForObject("SELECT count(*) FROM baby_member WHERE baby_id = ? "
+                + "AND role = 'OWNER' AND status = 'ACTIVE'", Integer.class, babyId);
+    }
+
     private JsonNode removeCaregiver(String babyId, String targetId, String jwt, int expectedStatus)
             throws Exception {
         var request = delete("/api/v1/babies/{babyId}/members/{memberId}", babyId, targetId);

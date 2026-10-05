@@ -8,6 +8,8 @@ public interface BabyRegistrationMemberAccess {
 
     BabyRegistrationMember lockActiveMember(Long memberId);
 
+    boolean isActiveMember(Long memberId);
+
     void initializeLastSelectedBabyIdIfAbsent(Long memberId, Long babyId);
 
     void clearLastSelectedBabyIfMatches(Long babyId);

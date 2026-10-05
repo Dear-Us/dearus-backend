@@ -33,6 +33,20 @@ public record BabyMember(Long id, Long memberId, BabyMemberRole role, BabyMember
         return new BabyMember(id, memberId, role, BabyMemberStatus.LEFT, joinedAt, now);
     }
 
+    public BabyMember promoteToOwner() {
+        if (role != BabyMemberRole.CAREGIVER || status != BabyMemberStatus.ACTIVE) {
+            throw new IllegalStateException("Only an active caregiver can become owner");
+        }
+        return new BabyMember(id, memberId, BabyMemberRole.OWNER, status, joinedAt, endedAt);
+    }
+
+    public BabyMember demoteToCaregiver() {
+        if (role != BabyMemberRole.OWNER || status != BabyMemberStatus.ACTIVE) {
+            throw new IllegalStateException("Only an active owner can become caregiver");
+        }
+        return new BabyMember(id, memberId, BabyMemberRole.CAREGIVER, status, joinedAt, endedAt);
+    }
+
     public static BabyMember joinAsCaregiver(Long memberId, Instant now) {
         return new BabyMember(null, memberId, BabyMemberRole.CAREGIVER,
                 BabyMemberStatus.ACTIVE, now, null);

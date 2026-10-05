@@ -20,4 +20,6 @@ public interface BabyRepository {
     Optional<BabyMember> findMemberForUpdate(Long babyId, Long memberId);
 
     int updateMembershipStatus(Long babyId, BabyMember changed);
+
+    void transferOwnership(Long babyId, BabyMember previousOwner, BabyMember newOwner);
 }

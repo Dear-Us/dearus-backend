@@ -17,6 +17,7 @@ public enum FamilyErrorCode implements ErrorCode {
     BABY_MEMBER_NOT_FOUND("BABY_MEMBER_NOT_FOUND", "공동 보호자 정보를 찾을 수 없습니다.", ErrorType.NOT_FOUND),
     BABY_MEMBER_MANAGEMENT_FORBIDDEN("BABY_MEMBER_MANAGEMENT_FORBIDDEN", "공동 보호자를 관리할 권한이 없습니다.", ErrorType.FORBIDDEN),
     BABY_MEMBER_OWNER_CONFLICT("BABY_MEMBER_OWNER_CONFLICT", "OWNER 보호자 관계는 종료할 수 없습니다.", ErrorType.CONFLICT),
+    BABY_OWNER_TRANSFER_CONFLICT("BABY_OWNER_TRANSFER_CONFLICT", "OWNER에게 권한을 이전할 수 없습니다.", ErrorType.CONFLICT),
     INVALID_BABY_UPDATE("INVALID_BABY_UPDATE", "수정할 아기 정보가 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     INVALID_BABY_NAME("INVALID_BABY_NAME", "아기 이름은 1~50자여야 합니다.", ErrorType.BAD_REQUEST),
     INVALID_BIRTH_DATE("INVALID_BIRTH_DATE", "생년월일이 올바르지 않습니다.", ErrorType.BAD_REQUEST),

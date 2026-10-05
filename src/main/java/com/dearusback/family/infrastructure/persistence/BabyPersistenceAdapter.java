@@ -118,4 +118,25 @@ public class BabyPersistenceAdapter implements BabyRepository {
                 changed.status().name(), LocalDateTime.ofInstant(changed.endedAt(), ZoneOffset.UTC),
                 babyId, changed.id(), changed.memberId());
     }
+
+    @Override
+    public void transferOwnership(Long babyId, BabyMember previousOwner, BabyMember newOwner) {
+        int demoted = jdbc.update("UPDATE baby_member SET role = 'CAREGIVER' WHERE baby_id = ? "
+                + "AND baby_member_id = ? AND member_id = ? AND role = 'OWNER' AND status = 'ACTIVE'",
+                babyId, previousOwner.id(), previousOwner.memberId());
+        if (demoted != 1) {
+            throw new IllegalStateException("Previous owner changed during transfer");
+        }
+        int promoted = jdbc.update("UPDATE baby_member SET role = 'OWNER' WHERE baby_id = ? "
+                + "AND baby_member_id = ? AND member_id = ? AND role = 'CAREGIVER' AND status = 'ACTIVE'",
+                babyId, newOwner.id(), newOwner.memberId());
+        if (promoted != 1) {
+            throw new IllegalStateException("Target caregiver changed during transfer");
+        }
+        Integer owners = jdbc.queryForObject("SELECT COUNT(*) FROM baby_member WHERE baby_id = ? "
+                + "AND role = 'OWNER' AND status = 'ACTIVE'", Integer.class, babyId);
+        if (owners == null || owners != 1) {
+            throw new IllegalStateException("Ownership transfer must leave exactly one active owner");
+        }
+    }
 }
