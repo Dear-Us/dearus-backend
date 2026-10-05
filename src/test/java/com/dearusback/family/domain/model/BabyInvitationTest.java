@@ -38,4 +38,22 @@ class BabyInvitationTest {
         assertThatThrownBy(() -> pending.expire(pending.expiresAt()).cancel(pending.expiresAt()))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void acceptIsSingleUseAndPreservesExpirationAndCancellationRules() {
+        BabyInvitation pending = BabyInvitation.create(1L, 2L, "c".repeat(64), CREATED);
+        BabyInvitation accepted = pending.accept(3L, CREATED.plusSeconds(1));
+        assertThat(accepted.status()).isEqualTo(BabyInvitationStatus.ACCEPTED);
+        assertThat(accepted.acceptedByMemberId()).isEqualTo(3L);
+        assertThat(accepted.acceptedAt()).isEqualTo(CREATED.plusSeconds(1));
+        assertThat(accepted.canceledAt()).isNull();
+        assertThatThrownBy(() -> accepted.accept(3L, CREATED.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> pending.cancel(CREATED.plusSeconds(1)).accept(3L, CREATED.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> pending.expire(pending.expiresAt()).accept(3L, pending.expiresAt()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> pending.accept(3L, pending.expiresAt()))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

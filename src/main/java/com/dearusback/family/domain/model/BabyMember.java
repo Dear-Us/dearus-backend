@@ -18,4 +18,17 @@ public record BabyMember(Long id, Long memberId, BabyMemberRole role, BabyMember
                 ? new BabyMember(id, memberId, role, BabyMemberStatus.REMOVED, joinedAt, now)
                 : this;
     }
+
+    public static BabyMember joinAsCaregiver(Long memberId, Instant now) {
+        return new BabyMember(null, memberId, BabyMemberRole.CAREGIVER,
+                BabyMemberStatus.ACTIVE, now, null);
+    }
+
+    public BabyMember reactivateAsCaregiver(Instant now) {
+        if (status != BabyMemberStatus.LEFT && status != BabyMemberStatus.REMOVED) {
+            throw new IllegalStateException("Only an inactive caregiver membership can be reactivated");
+        }
+        return new BabyMember(id, memberId, BabyMemberRole.CAREGIVER,
+                BabyMemberStatus.ACTIVE, now, null);
+    }
 }

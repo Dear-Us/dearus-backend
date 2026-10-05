@@ -12,6 +12,7 @@ public enum FamilyErrorCode implements ErrorCode {
     INVALID_INVITATION_ID("INVALID_INVITATION_ID", "초대 ID가 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     INVITATION_NOT_FOUND("INVITATION_NOT_FOUND", "초대 정보를 찾을 수 없습니다.", ErrorType.NOT_FOUND),
     INVITATION_CONFLICT("INVITATION_CONFLICT", "취소할 수 없는 초대입니다.", ErrorType.CONFLICT),
+    INVITATION_ACCEPT_CONFLICT("INVITATION_ACCEPT_CONFLICT", "수락할 수 없는 초대입니다.", ErrorType.CONFLICT),
     INVALID_BABY_UPDATE("INVALID_BABY_UPDATE", "수정할 아기 정보가 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     INVALID_BABY_NAME("INVALID_BABY_NAME", "아기 이름은 1~50자여야 합니다.", ErrorType.BAD_REQUEST),
     INVALID_BIRTH_DATE("INVALID_BIRTH_DATE", "생년월일이 올바르지 않습니다.", ErrorType.BAD_REQUEST),

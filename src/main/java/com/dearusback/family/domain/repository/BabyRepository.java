@@ -13,4 +13,6 @@ public interface BabyRepository {
     Baby update(Baby baby);
 
     void markDeleted(Baby baby);
+
+    void saveCaregiverMembership(Baby baby, Long memberId);
 }

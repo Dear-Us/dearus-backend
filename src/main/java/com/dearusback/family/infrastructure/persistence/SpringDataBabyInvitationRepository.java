@@ -26,4 +26,12 @@ interface SpringDataBabyInvitationRepository extends JpaRepository<BabyInvitatio
     Optional<BabyInvitationJpaEntity> findByIdForUpdate(@Param("invitationId") Long invitationId);
 
     Optional<BabyInvitationJpaEntity> findByTokenHash(String tokenHash);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select invitation from BabyInvitationJpaEntity invitation where invitation.tokenHash = :tokenHash")
+    Optional<BabyInvitationJpaEntity> findByTokenHashForUpdate(@Param("tokenHash") String tokenHash);
+
+    @Query("select invitation.babyId from BabyInvitationJpaEntity invitation "
+            + "where invitation.tokenHash = :tokenHash")
+    Optional<Long> findBabyIdByTokenHash(@Param("tokenHash") String tokenHash);
 }

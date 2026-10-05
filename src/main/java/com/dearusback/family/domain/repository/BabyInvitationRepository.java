@@ -14,4 +14,8 @@ public interface BabyInvitationRepository {
     Optional<BabyInvitation> findByIdForUpdate(Long invitationId);
 
     Optional<BabyInvitation> findByTokenHash(String tokenHash);
+
+    Optional<BabyInvitation> findByTokenHashForUpdate(String tokenHash);
+
+    Optional<Long> findBabyIdByTokenHash(String tokenHash);
 }

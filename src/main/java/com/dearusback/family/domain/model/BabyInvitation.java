@@ -48,4 +48,13 @@ public record BabyInvitation(Long id, Long babyId, Long createdByMemberId, Strin
                 BabyInvitationStatus.CANCELED, expiresAt, acceptedByMemberId, acceptedAt,
                 now, createdAt, now);
     }
+
+    public BabyInvitation accept(Long memberId, Instant now) {
+        Objects.requireNonNull(memberId);
+        if (status != BabyInvitationStatus.PENDING || !expiresAt.isAfter(now)) {
+            throw new IllegalStateException("Only an unexpired pending invitation can be accepted");
+        }
+        return new BabyInvitation(id, babyId, createdByMemberId, tokenHash, role,
+                BabyInvitationStatus.ACCEPTED, expiresAt, memberId, now, canceledAt, createdAt, now);
+    }
 }

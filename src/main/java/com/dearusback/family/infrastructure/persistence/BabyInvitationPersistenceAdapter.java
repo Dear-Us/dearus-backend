@@ -46,4 +46,14 @@ public class BabyInvitationPersistenceAdapter implements BabyInvitationRepositor
     public Optional<BabyInvitation> findByTokenHash(String tokenHash) {
         return repository.findByTokenHash(tokenHash).map(BabyInvitationMapper::toDomain);
     }
+
+    @Override
+    public Optional<BabyInvitation> findByTokenHashForUpdate(String tokenHash) {
+        return repository.findByTokenHashForUpdate(tokenHash).map(BabyInvitationMapper::toDomain);
+    }
+
+    @Override
+    public Optional<Long> findBabyIdByTokenHash(String tokenHash) {
+        return repository.findBabyIdByTokenHash(tokenHash);
+    }
 }

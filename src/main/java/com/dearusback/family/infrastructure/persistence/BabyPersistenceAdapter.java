@@ -36,8 +36,8 @@ public class BabyPersistenceAdapter implements BabyRepository {
     @Override
     public Optional<Baby> findByIdAndAllMembersForUpdate(Long babyId) {
         return repository.findByIdForUpdate(babyId).map(entity -> {
-            memberships.findAllByBabyIdForUpdate(babyId);
-            return BabyMapper.toDomain(entity);
+            var lockedMembers = memberships.findAllByBabyIdForUpdate(babyId);
+            return BabyMapper.toDomain(entity, lockedMembers);
         });
     }
 
@@ -58,10 +58,31 @@ public class BabyPersistenceAdapter implements BabyRepository {
         Map<Long, BabyMember> changedMembers = baby.members().stream()
                 .collect(Collectors.toMap(BabyMember::id, Function.identity()));
         entity.markDeleted(baby.deletedAt());
-        for (BabyMemberJpaEntity membership : entity.members()) {
+        for (BabyMemberJpaEntity membership : memberships.findAllByBabyIdForUpdate(baby.id())) {
             BabyMember changed = changedMembers.get(membership.id());
             membership.updateStatus(changed.status(), changed.endedAt());
         }
         repository.flush();
+    }
+
+    @Override
+    public void saveCaregiverMembership(Baby baby, Long memberId) {
+        BabyJpaEntity entity = repository.findByIdForUpdate(baby.id())
+                .orElseThrow(() -> new IllegalStateException("Baby disappeared during caregiver connection"));
+        BabyMember target = baby.members().stream()
+                .filter(member -> member.memberId().equals(memberId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Caregiver membership missing from aggregate"));
+        BabyMemberJpaEntity existing = memberships.findByBabyAndMemberForUpdate(baby.id(), memberId)
+                .orElse(null);
+        if (existing == null) {
+            BabyMemberJpaEntity added = new BabyMemberJpaEntity(null, target.memberId(), target.role(),
+                    target.status(), target.joinedAt(), target.endedAt());
+            entity.addMember(added);
+            memberships.saveAndFlush(added);
+        } else {
+            existing.reactivateAsCaregiver(target.joinedAt());
+            memberships.flush();
+        }
     }
 }

@@ -67,6 +67,12 @@ class BabyMemberJpaEntity {
         status = BabyMemberStatus.LEFT;
         endedAt = now;
     }
+    void reactivateAsCaregiver(Instant now) {
+        role = BabyMemberRole.CAREGIVER;
+        status = BabyMemberStatus.ACTIVE;
+        joinedAt = now;
+        endedAt = null;
+    }
     Long id() { return id; }
     Long memberId() { return memberId; }
     BabyMemberRole role() { return role; }
