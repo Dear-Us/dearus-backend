@@ -102,4 +102,38 @@ class CareRecordTest {
                 new FeedingDetail(FeedingType.DIRECT_BREASTFEEDING, null, BreastSide.LEFT, null), NOW))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void editPreservesOwnershipAndValidatesComposedSleepRange() {
+        CareRecord sleep = CareRecord.completed(1L, 2L, CareRecordType.SLEEP,
+                CareRecordInputType.MANUAL, null, BEFORE, BEFORE.plusHours(2), "old", null, NOW)
+                .persisted(9L, 0);
+        CareRecord edited = sleep.edit(null, BEFORE.plusMinutes(30), null, true, null,
+                null, 3L, NOW.plusSeconds(10));
+        assertThat(edited.recordedAt()).isEqualTo(BEFORE.plusMinutes(30));
+        assertThat(edited.startAt()).isEqualTo(BEFORE.plusMinutes(30));
+        assertThat(edited.endAt()).isEqualTo(BEFORE.plusHours(2));
+        assertThat(edited.memo()).isNull();
+        assertThat(edited.createdByMemberId()).isEqualTo(2L);
+        assertThat(edited.completedByMemberId()).isEqualTo(2L);
+        assertThat(edited.lastUpdatedByMemberId()).isEqualTo(3L);
+        assertThatThrownBy(() -> sleep.edit(null, BEFORE.plusHours(3), null, false, null,
+                null, 3L, NOW.plusSeconds(10))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void softDeletePreservesRecordAndBlocksFurtherEditing() {
+        CareRecord record = CareRecord.completed(1L, 2L, CareRecordType.OTHER,
+                CareRecordInputType.MANUAL, BEFORE, null, null, null,
+                new CareRecord.OtherDetail("일상"), NOW).persisted(9L, 1);
+        CareRecord deleted = record.softDelete(3L, NOW.plusSeconds(10));
+        assertThat(deleted.deleted()).isTrue();
+        assertThat(deleted.deletedByMemberId()).isEqualTo(3L);
+        assertThat(deleted.lastUpdatedByMemberId()).isEqualTo(3L);
+        assertThat(deleted.createdByMemberId()).isEqualTo(2L);
+        assertThat(deleted.completedByMemberId()).isEqualTo(2L);
+        assertThat(deleted.detail()).isEqualTo(record.detail());
+        assertThatThrownBy(() -> deleted.edit(null, null, null, true, "x", null, 3L, NOW.plusSeconds(20)))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

@@ -50,7 +50,7 @@ public final class CreateCareRecordRequest {
         }
     }
 
-    private static Detail detail(CareRecordType type, JsonNode node) {
+    static Detail detail(CareRecordType type, JsonNode node) {
         if (node == null || !node.isObject()) {
             throw invalid();
         }

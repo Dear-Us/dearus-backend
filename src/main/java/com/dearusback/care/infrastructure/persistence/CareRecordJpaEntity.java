@@ -3,6 +3,8 @@ package com.dearusback.care.infrastructure.persistence;
 import com.dearusback.care.domain.model.CareRecord.CareRecordInputType;
 import com.dearusback.care.domain.model.CareRecord.CareRecordStatus;
 import com.dearusback.care.domain.model.CareRecord.CareRecordType;
+import com.dearusback.care.domain.model.CareRecord;
+import com.dearusback.care.domain.model.CareRecord.Detail;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -13,6 +15,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 
 @Entity
 @Table(name = "care_record")
@@ -102,4 +106,28 @@ class CareRecordJpaEntity {
 
     Long id() { return id; }
     long version() { return version; }
+    CareRecordStatus status() { return status; }
+
+    CareRecord toDomain(Detail detail) {
+        return new CareRecord(id, babyId, recordType, inputType, status,
+                OffsetDateTime.ofInstant(recordedAt, ZoneOffset.UTC), offset(startAt), offset(endAt),
+                memo, detail, createdByMemberId, completedByMemberId, lastUpdatedByMemberId,
+                deletedByMemberId, version, deleted, createdAt, updatedAt, deletedAt);
+    }
+
+    void apply(CareRecord record) {
+        recordedAt = record.recordedAt().toInstant();
+        startAt = record.startAt() == null ? null : record.startAt().toInstant();
+        endAt = record.endAt() == null ? null : record.endAt().toInstant();
+        memo = record.memo();
+        lastUpdatedByMemberId = record.lastUpdatedByMemberId();
+        deletedByMemberId = record.deletedByMemberId();
+        deleted = record.deleted();
+        updatedAt = record.updatedAt();
+        deletedAt = record.deletedAt();
+    }
+
+    private OffsetDateTime offset(Instant value) {
+        return value == null ? null : OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
+    }
 }

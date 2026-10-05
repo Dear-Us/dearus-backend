@@ -12,6 +12,7 @@ import com.dearusback.care.domain.model.CareRecord.MedicineDetail;
 import com.dearusback.care.domain.model.CareRecord.OtherDetail;
 import com.dearusback.care.domain.model.CareRecord.TemperatureDetail;
 import com.dearusback.care.domain.repository.CareRecordRepository;
+import com.dearusback.care.application.port.out.CareRecordQueryPort;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -21,6 +22,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -28,17 +30,67 @@ public class CareRecordPersistenceAdapter implements CareRecordRepository {
 
     private final SpringDataCareRecordRepository records;
     private final JdbcTemplate jdbc;
+    private final CareRecordQueryPort queries;
 
-    public CareRecordPersistenceAdapter(SpringDataCareRecordRepository records, JdbcTemplate jdbc) {
+    public CareRecordPersistenceAdapter(SpringDataCareRecordRepository records, JdbcTemplate jdbc,
+                                        CareRecordQueryPort queries) {
         this.records = records;
         this.jdbc = jdbc;
+        this.queries = queries;
     }
 
     @Override
     public CareRecord save(CareRecord record) {
         CareRecordJpaEntity saved = records.saveAndFlush(new CareRecordJpaEntity(record));
         long id = saved.id();
-        switch (record.detail()) {
+        insertDetail(id, record.detail());
+        return record.persisted(saved.id(), saved.version());
+    }
+
+    @Override
+    public Optional<CareRecord> findByBabyAndId(Long babyId, Long recordId) {
+        return records.findByIdAndBabyIdAndDeletedFalse(recordId, babyId).map(entity -> {
+            CareRecord.Detail detail = entity.status() == CareRecordStatus.COMPLETED
+                    ? queries.findCompletedRecord(babyId, recordId)
+                            .orElseThrow(() -> new IllegalStateException("Completed record disappeared"))
+                            .detail()
+                    : null;
+            return entity.toDomain(detail);
+        });
+    }
+
+    @Override
+    public CareRecord updateCompleted(CareRecord record, boolean replaceDetail) {
+        CareRecordJpaEntity entity = records.findByIdAndBabyIdAndDeletedFalse(record.id(), record.babyId())
+                .orElseThrow(() -> new OptimisticLockingFailureException("Care record was deleted"));
+        if (entity.version() != record.version()) {
+            throw new OptimisticLockingFailureException("Care record version changed");
+        }
+        entity.apply(record);
+        CareRecordJpaEntity saved = records.saveAndFlush(entity);
+        if (replaceDetail && !record.deleted() && record.recordType() != CareRecordType.SLEEP) {
+            deleteDetail(record.id(), record.recordType());
+            insertDetail(record.id(), record.detail());
+        }
+        return record.persisted(saved.id(), saved.version());
+    }
+
+    private void deleteDetail(Long id, CareRecordType type) {
+        String table = switch (type) {
+            case FEEDING -> "feeding_detail";
+            case DIAPER -> "diaper_detail";
+            case TEMPERATURE -> "temperature_detail";
+            case MEDICINE -> "medicine_detail";
+            case OTHER -> "other_detail";
+            case SLEEP -> throw new IllegalArgumentException("Sleep has no detail");
+        };
+        if (jdbc.update("DELETE FROM " + table + " WHERE record_id = ?", id) != 1) {
+            throw new IllegalStateException("Completed care detail is missing");
+        }
+    }
+
+    private void insertDetail(long id, CareRecord.Detail raw) {
+        switch (raw) {
             case FeedingDetail detail -> jdbc.update("INSERT INTO feeding_detail "
                     + "(record_id, feeding_type, amount_ml, breast_side, duration_minutes) VALUES (?, ?, ?, ?, ?)",
                     id, detail.feedingType().name(), detail.amountMl(),
@@ -56,7 +108,6 @@ public class CareRecordPersistenceAdapter implements CareRecordRepository {
                     id, detail.title());
             case null -> { }
         }
-        return record.persisted(saved.id(), saved.version());
     }
 
     @Override

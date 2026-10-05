@@ -91,6 +91,35 @@ public record CareRecord(Long id, Long babyId, CareRecordType recordType, CareRe
                 deletedByMemberId, version, deleted, createdAt, now, deletedAt);
     }
 
+    public CareRecord edit(OffsetDateTime newRecordedAt, OffsetDateTime newStartAt, OffsetDateTime newEndAt,
+                           boolean memoPresent, String newMemo, Detail newDetail, Long memberId, Instant now) {
+        requireCompleted();
+        OffsetDateTime finalRecordedAt = newRecordedAt == null ? recordedAt : newRecordedAt;
+        OffsetDateTime finalStartAt = newStartAt == null ? startAt : newStartAt;
+        OffsetDateTime finalEndAt = newEndAt == null ? endAt : newEndAt;
+        String finalMemo = memoPresent ? newMemo : memo;
+        Detail finalDetail = newDetail == null ? detail : newDetail;
+        CareRecord validated = completed(babyId, createdByMemberId, recordType, inputType,
+                recordType == CareRecordType.SLEEP ? null : finalRecordedAt, finalStartAt, finalEndAt,
+                finalMemo, finalDetail, now);
+        return new CareRecord(id, babyId, recordType, inputType, status, validated.recordedAt(),
+                finalStartAt, finalEndAt, finalMemo, finalDetail, createdByMemberId, completedByMemberId,
+                memberId, deletedByMemberId, version, false, createdAt, now, deletedAt);
+    }
+
+    public CareRecord softDelete(Long memberId, Instant now) {
+        requireCompleted();
+        return new CareRecord(id, babyId, recordType, inputType, status, recordedAt, startAt, endAt,
+                memo, detail, createdByMemberId, completedByMemberId, memberId, memberId,
+                version, true, createdAt, now, now);
+    }
+
+    private void requireCompleted() {
+        if (deleted || status != CareRecordStatus.COMPLETED) {
+            throw new IllegalStateException("Only completed records can be edited or deleted");
+        }
+    }
+
     private void requireInProgress() {
         boolean validSleep = recordType == CareRecordType.SLEEP && detail == null;
         boolean validFeeding = recordType == CareRecordType.FEEDING && detail instanceof FeedingDetail feeding

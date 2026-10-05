@@ -2,6 +2,7 @@ package com.dearusback.care.presentation.rest;
 
 import com.dearusback.care.application.port.in.CreateCareRecordUseCase;
 import com.dearusback.care.application.port.in.ActiveCareRecordUseCase;
+import com.dearusback.care.application.port.in.EditCareRecordUseCase;
 import com.dearusback.care.application.port.in.CareRecordQueryUseCase;
 import com.dearusback.care.application.model.CalendarDayCount;
 import com.dearusback.care.domain.model.CareRecord.CareRecordType;
@@ -10,6 +11,7 @@ import com.dearusback.care.domain.exception.CareException;
 import com.dearusback.care.presentation.dto.CareRecordResponse;
 import com.dearusback.care.presentation.dto.CreateCareRecordRequest;
 import com.dearusback.care.presentation.dto.StartCareRecordRequest;
+import com.dearusback.care.presentation.dto.EditCareRecordRequest;
 import com.dearusback.support.presentation.response.ApiResponse;
 import java.time.LocalDate;
 import java.time.DateTimeException;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -37,12 +40,14 @@ public class CareRecordController {
     private final CreateCareRecordUseCase records;
     private final CareRecordQueryUseCase queries;
     private final ActiveCareRecordUseCase activeRecords;
+    private final EditCareRecordUseCase edits;
 
     public CareRecordController(CreateCareRecordUseCase records, CareRecordQueryUseCase queries,
-                                ActiveCareRecordUseCase activeRecords) {
+                                ActiveCareRecordUseCase activeRecords, EditCareRecordUseCase edits) {
         this.records = records;
         this.queries = queries;
         this.activeRecords = activeRecords;
+        this.edits = edits;
     }
 
     @GetMapping
@@ -131,6 +136,34 @@ public class CareRecordController {
         requirePositive(babyId);
         requirePositive(recordId);
         activeRecords.cancel(memberId, babyId, recordId);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @PatchMapping(value = "/{recordId}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ApiResponse<CareRecordResponse>> edit(@AuthenticationPrincipal Long memberId,
+                                                                 @PathVariable Long babyId,
+                                                                 @PathVariable Long recordId,
+                                                                 @RequestBody JsonNode request) {
+        requirePositive(babyId);
+        requirePositive(recordId);
+        return ResponseEntity.ok(ApiResponse.success(CareRecordResponse.from(edits.edit(
+                EditCareRecordRequest.toCommand(babyId, recordId, memberId, request)))));
+    }
+
+    @DeleteMapping("/{recordId}")
+    public ResponseEntity<ApiResponse<Void>> delete(@AuthenticationPrincipal Long memberId,
+                                                     @PathVariable Long babyId, @PathVariable Long recordId,
+                                                     @RequestParam(required = false) String version) {
+        requirePositive(babyId);
+        requirePositive(recordId);
+        if (version == null || !version.matches("\\d+")) {
+            throw new CareException(CareErrorCode.INVALID_RECORD);
+        }
+        try {
+            edits.delete(memberId, babyId, recordId, Long.parseLong(version));
+        } catch (NumberFormatException exception) {
+            throw new CareException(CareErrorCode.INVALID_RECORD);
+        }
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 

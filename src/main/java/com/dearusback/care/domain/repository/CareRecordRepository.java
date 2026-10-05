@@ -9,4 +9,8 @@ public interface CareRecordRepository {
     Optional<CareRecord> findByBabyAndIdForUpdate(Long babyId, Long recordId);
 
     CareRecord updateTransition(CareRecord record);
+
+    Optional<CareRecord> findByBabyAndId(Long babyId, Long recordId);
+
+    CareRecord updateCompleted(CareRecord record, boolean replaceDetail);
 }

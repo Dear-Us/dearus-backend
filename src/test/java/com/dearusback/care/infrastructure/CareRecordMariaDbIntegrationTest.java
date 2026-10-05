@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -268,6 +269,303 @@ class CareRecordMariaDbIntegrationTest {
                 .isIn("COMPLETED", "CANCELED");
         assertThat(start(baby, token(owner), "{\"recordType\":\"SLEEP\"}", 201).path("data")
                 .path("status").asText()).isEqualTo("IN_PROGRESS");
+    }
+
+    @Test
+    void completedRecordCanBeEditedThenSoftDeletedAcrossQueryApis() throws Exception {
+        long owner = insertMember(false);
+        long caregiver = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        long id = created(baby, owner, "{\"recordType\":\"OTHER\",\"recordedAt\":\"2026-10-04T10:00:00+09:00\","
+                + "\"memo\":\"기존\",\"detail\":{\"title\":\"일상\"}}", "OTHER")
+                .path("recordId").asLong();
+        JsonNode before = detail(baby, id, token(owner), 200).path("data");
+        assertThat(before.path("version").asLong()).isZero();
+        var babyBefore = jdbc.queryForMap("SELECT is_deleted, created_by_member_id FROM baby WHERE baby_id = ?", baby);
+        var membershipBefore = jdbc.queryForMap("SELECT role, status FROM baby_member "
+                + "WHERE baby_id = ? AND member_id = ?", baby, owner);
+
+        JsonNode edited = edit(baby, id, token(caregiver), "{\"version\":0,\"memo\":null}", 200)
+                .path("data");
+        assertThat(edited.path("version").asLong()).isEqualTo(1);
+        assertThat(edited.path("memo").isNull()).isTrue();
+        assertThat(edited.path("detail").path("title").asText()).isEqualTo("일상");
+        assertThat(detail(baby, id, token(owner), 200).path("data")).isEqualTo(edited);
+        assertThat(jdbc.queryForMap("SELECT created_by_member_id, completed_by_member_id, "
+                + "last_updated_by_member_id FROM care_record WHERE record_id = ?", id))
+                .containsEntry("created_by_member_id", owner).containsEntry("completed_by_member_id", owner)
+                .containsEntry("last_updated_by_member_id", caregiver);
+        assertFailure(edit(baby, id, token(owner), "{\"version\":0,\"memo\":\"stale\"}", 409));
+        assertFailure(deleteRecord(baby, id, token(owner), "0", 409));
+
+        JsonNode changedAt = edit(baby, id, token(owner), "{\"version\":1,"
+                + "\"recordedAt\":\"2026-10-05T14:00:00+09:00\",\"memo\":\"최신\"}", 200)
+                .path("data");
+        assertThat(changedAt.path("version").asLong()).isEqualTo(2);
+        assertThat(changedAt.path("recordedAt").asText()).isEqualTo("2026-10-05T14:00:00+09:00");
+        assertThat(list(baby, token(owner), "2026-10-04", null, 200).path("data").size()).isZero();
+        assertThat(list(baby, token(owner), "2026-10-05", null, 200).path("data").size()).isEqualTo(1);
+        assertThat(calendar(baby, token(owner), "2026", "10", 200).path("data").get(0)
+                .path("recordCount").asLong()).isEqualTo(1);
+
+        assertSuccess(deleteRecord(baby, id, token(caregiver), "2", 200));
+        assertThat(jdbc.queryForMap("SELECT is_deleted, deleted_at, deleted_by_member_id, "
+                + "last_updated_by_member_id, created_by_member_id, completed_by_member_id, version "
+                + "FROM care_record WHERE record_id = ?", id))
+                .containsEntry("is_deleted", true).containsEntry("deleted_by_member_id", caregiver)
+                .containsEntry("last_updated_by_member_id", caregiver)
+                .containsEntry("created_by_member_id", owner).containsEntry("completed_by_member_id", owner)
+                .containsEntry("version", 3L);
+        assertThat(jdbc.queryForObject("SELECT deleted_at IS NOT NULL FROM care_record WHERE record_id = ?",
+                Boolean.class, id)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM other_detail WHERE record_id = ?",
+                Integer.class, id)).isEqualTo(1);
+        assertThat(list(baby, token(owner), "2026-10-05", null, 200).path("data").size()).isZero();
+        assertThat(calendar(baby, token(owner), "2026", "10", 200).path("data").size()).isZero();
+        assertFailure(detail(baby, id, token(owner), 404));
+        assertFailure(deleteRecord(baby, id, token(owner), "3", 404));
+        assertFailure(edit(baby, id, token(owner), "{\"version\":3,\"memo\":\"복구\"}", 404));
+        assertThat(jdbc.queryForMap("SELECT is_deleted, created_by_member_id FROM baby WHERE baby_id = ?", baby))
+                .isEqualTo(babyBefore);
+        assertThat(jdbc.queryForMap("SELECT role, status FROM baby_member WHERE baby_id = ? AND member_id = ?",
+                baby, owner)).isEqualTo(membershipBefore);
+        assertThat(jdbc.queryForObject("SELECT last_selected_baby_id FROM member WHERE member_id = ?",
+                Long.class, owner)).isNull();
+    }
+
+    @Test
+    void completeDetailsCanBeReplacedForEveryType() throws Exception {
+        long owner = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        String at = "2026-10-04T10:00:00+09:00";
+        long feeding = created(baby, owner, "{\"recordType\":\"FEEDING\",\"recordedAt\":\"" + at
+                + "\",\"detail\":{\"feedingType\":\"FORMULA\",\"amountMl\":120}}", "FEEDING")
+                .path("recordId").asLong();
+        JsonNode direct = edit(baby, feeding, token(owner), "{\"version\":0,\"detail\":{"
+                + "\"feedingType\":\"DIRECT_BREASTFEEDING\",\"breastSide\":\"BOTH\","
+                + "\"durationMinutes\":20}}", 200).path("data");
+        assertThat(direct.path("detail").path("breastSide").asText()).isEqualTo("BOTH");
+        assertThat(jdbc.queryForMap("SELECT amount_ml, breast_side, duration_minutes FROM feeding_detail "
+                + "WHERE record_id = ?", feeding)).containsEntry("amount_ml", null)
+                .containsEntry("breast_side", "BOTH").containsEntry("duration_minutes", 20);
+        JsonNode formula = edit(baby, feeding, token(owner), "{\"version\":1,\"detail\":{"
+                + "\"feedingType\":\"FORMULA\",\"amountMl\":80}}", 200).path("data");
+        assertThat(formula.path("detail").path("amountMl").asInt()).isEqualTo(80);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM feeding_detail WHERE record_id = ?",
+                Integer.class, feeding)).isEqualTo(1);
+
+        long diaper = created(baby, owner, "{\"recordType\":\"DIAPER\",\"recordedAt\":\"" + at
+                + "\",\"detail\":{\"diaperType\":\"URINE\"}}", "DIAPER").path("recordId").asLong();
+        assertThat(edit(baby, diaper, token(owner), "{\"version\":0,\"detail\":{"
+                + "\"diaperType\":\"BOTH\",\"condition\":\"보통\",\"color\":\"노랑\"}}", 200)
+                .path("data").path("detail").path("diaperType").asText()).isEqualTo("BOTH");
+        long temperature = created(baby, owner, "{\"recordType\":\"TEMPERATURE\",\"recordedAt\":\"" + at
+                + "\",\"detail\":{\"temperatureCelsius\":37.2,\"measuredPart\":\"EAR\"}}",
+                "TEMPERATURE").path("recordId").asLong();
+        assertThat(edit(baby, temperature, token(owner), "{\"version\":0,\"detail\":{"
+                + "\"temperatureCelsius\":38.1,\"measuredPart\":\"FOREHEAD\"}}", 200)
+                .path("data").path("detail").path("measuredPart").asText()).isEqualTo("FOREHEAD");
+        long medicine = created(baby, owner, "{\"recordType\":\"MEDICINE\",\"recordedAt\":\"" + at
+                + "\",\"detail\":{\"medicineName\":\"약\",\"doseValue\":2,\"doseUnit\":\"ML\"}}",
+                "MEDICINE").path("recordId").asLong();
+        assertThat(edit(baby, medicine, token(owner), "{\"version\":0,\"detail\":{"
+                + "\"medicineName\":\" 새 약 \",\"doseValue\":3.5,\"doseUnit\":\"MG\"}}", 200)
+                .path("data").path("detail").path("medicineName").asText()).isEqualTo("새 약");
+        long other = created(baby, owner, "{\"recordType\":\"OTHER\",\"recordedAt\":\"" + at
+                + "\",\"detail\":{\"title\":\"일상\"}}", "OTHER").path("recordId").asLong();
+        assertThat(edit(baby, other, token(owner), "{\"version\":0,\"detail\":{\"title\":\" 메모 \"}}", 200)
+                .path("data").path("detail").path("title").asText()).isEqualTo("메모");
+    }
+
+    @Test
+    void sleepPatchComposesFinalTimesAndRejectsInvalidRequests() throws Exception {
+        long owner = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        long sleep = created(baby, owner, "{\"recordType\":\"SLEEP\","
+                + "\"startAt\":\"2026-10-03T22:00:00+09:00\","
+                + "\"endAt\":\"2026-10-04T01:30:00+09:00\"}", "SLEEP").path("recordId").asLong();
+        JsonNode movedStart = edit(baby, sleep, token(owner), "{\"version\":0,"
+                + "\"startAt\":\"2026-10-03T23:00:00+09:00\"}", 200).path("data");
+        assertThat(movedStart.path("recordedAt").asText()).isEqualTo("2026-10-03T23:00:00+09:00");
+        assertThat(movedStart.path("endAt").asText()).isEqualTo("2026-10-04T01:30:00+09:00");
+        JsonNode movedEnd = edit(baby, sleep, token(owner), "{\"version\":1,"
+                + "\"endAt\":\"2026-10-04T02:30:00+09:00\"}", 200).path("data");
+        assertThat(movedEnd.path("startAt").asText()).isEqualTo("2026-10-03T23:00:00+09:00");
+        assertThat(movedEnd.path("endAt").asText()).isEqualTo("2026-10-04T02:30:00+09:00");
+        for (String body : List.of("{\"version\":2}",
+                "{\"version\":-1,\"memo\":\"x\"}",
+                "{\"memo\":\"x\"}",
+                "{\"version\":2,\"recordType\":\"FEEDING\"}",
+                "{\"version\":2,\"recordedAt\":\"2026-10-03T23:00:00+09:00\"}",
+                "{\"version\":2,\"detail\":null}",
+                "{\"version\":2,\"startAt\":\"2026-10-04T03:00:00+09:00\"}",
+                "{\"version\":2,\"endAt\":\"2099-01-01T00:00:00Z\"}")) {
+            assertFailure(edit(baby, sleep, token(owner), body, 400));
+        }
+        assertFailure(deleteRecord(baby, sleep, token(owner), null, 400));
+        assertFailure(deleteRecord(baby, sleep, token(owner), "-1", 400));
+        assertFailure(deleteRecord(baby, sleep, token(owner), "invalid", 400));
+        assertFailure(deleteRecord(baby, sleep, token(owner), "1", 409));
+        assertThat(detail(baby, sleep, token(owner), 200).path("data").path("version").asLong()).isEqualTo(2);
+    }
+
+    @Test
+    void editingRejectsInvalidDetailsAndRollsBackDetailFailure() throws Exception {
+        long owner = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        long feeding = created(baby, owner, "{\"recordType\":\"FEEDING\","
+                + "\"recordedAt\":\"2026-10-04T10:00:00+09:00\","
+                + "\"detail\":{\"feedingType\":\"FORMULA\",\"amountMl\":120}}", "FEEDING")
+                .path("recordId").asLong();
+        for (String body : List.of(
+                "{\"version\":0,\"detail\":{\"feedingType\":\"FORMULA\"}}",
+                "{\"version\":0,\"detail\":{\"feedingType\":\"FORMULA\",\"amountMl\":120,"
+                        + "\"breastSide\":\"LEFT\"}}",
+                "{\"version\":0,\"detail\":{\"feedingType\":\"DIRECT_BREASTFEEDING\","
+                        + "\"breastSide\":\"LEFT\"}}",
+                "{\"version\":0,\"detail\":{\"diaperType\":\"URINE\"}}",
+                "{\"version\":0,\"startAt\":\"2026-10-04T10:00:00+09:00\"}",
+                "{\"version\":0,\"recordedAt\":\"2099-01-01T00:00:00Z\"}")) {
+            assertFailure(edit(baby, feeding, token(owner), body, 400));
+        }
+        jdbc.execute("CREATE TRIGGER reject_care_edit BEFORE INSERT ON feeding_detail "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='forced edit detail failure'");
+        try {
+            assertFailure(edit(baby, feeding, token(owner), "{\"version\":0,\"memo\":\"변경\","
+                    + "\"detail\":{\"feedingType\":\"FORMULA\",\"amountMl\":130}}", 500));
+        } finally {
+            jdbc.execute("DROP TRIGGER reject_care_edit");
+        }
+        JsonNode unchanged = detail(baby, feeding, token(owner), 200).path("data");
+        assertThat(unchanged.path("version").asLong()).isZero();
+        assertThat(unchanged.path("memo").isNull()).isTrue();
+        assertThat(unchanged.path("detail").path("amountMl").asInt()).isEqualTo(120);
+    }
+
+    @Test
+    void sameValueMemoEditIncrementsVersionWithoutRewritingDetail() throws Exception {
+        long owner = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        long id = created(baby, owner, "{\"recordType\":\"OTHER\","
+                + "\"recordedAt\":\"2026-10-04T10:00:00+09:00\","
+                + "\"detail\":{\"title\":\"일상\"}}", "OTHER").path("recordId").asLong();
+        jdbc.execute("CREATE TRIGGER reject_unrequested_detail_write BEFORE INSERT ON other_detail "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='detail must remain untouched'");
+        try {
+            JsonNode edited = edit(baby, id, token(owner), "{\"version\":0,\"memo\":null}", 200).path("data");
+            assertThat(edited.path("version").asLong()).isEqualTo(1);
+            assertThat(edited.path("memo").isNull()).isTrue();
+        } finally {
+            jdbc.execute("DROP TRIGGER reject_unrequested_detail_write");
+        }
+        assertThat(jdbc.queryForObject("SELECT title FROM other_detail WHERE record_id = ?", String.class, id))
+                .isEqualTo("일상");
+    }
+
+    @Test
+    void editAndDeleteEnforceMembershipRecordStateAndBabyScope() throws Exception {
+        long owner = insertMember(false);
+        long caregiver = insertMember(false);
+        long outsider = insertMember(false);
+        long left = insertMember(false);
+        long removed = insertMember(false);
+        long baby = insertBaby(owner, false);
+        long otherBaby = insertBaby(owner, false);
+        long deletedBaby = insertBaby(owner, true);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        insertMembership(otherBaby, owner, "OWNER", "ACTIVE");
+        insertMembership(deletedBaby, owner, "OWNER", "ACTIVE");
+        long completed = created(baby, owner, "{\"recordType\":\"OTHER\","
+                + "\"recordedAt\":\"2026-10-04T10:00:00+09:00\","
+                + "\"detail\":{\"title\":\"일상\"}}", "OTHER").path("recordId").asLong();
+        long activeId = start(baby, token(owner), "{\"recordType\":\"SLEEP\"}", 201)
+                .path("data").path("recordId").asLong();
+        long canceled = start(otherBaby, token(owner), "{\"recordType\":\"SLEEP\"}", 201)
+                .path("data").path("recordId").asLong();
+        transition(otherBaby, canceled, token(owner), "cancel", 200);
+        assertFailure(edit(baby, activeId, token(owner), "{\"version\":0,\"memo\":\"x\"}", 409));
+        assertFailure(deleteRecord(baby, activeId, token(owner), "0", 409));
+        assertFailure(edit(otherBaby, canceled, token(owner), "{\"version\":1,\"memo\":\"x\"}", 409));
+        assertFailure(deleteRecord(otherBaby, canceled, token(owner), "1", 409));
+        for (long member : List.of(outsider, left, removed)) {
+            assertFailure(edit(baby, completed, token(member), "{\"version\":0,\"memo\":\"x\"}", 404));
+            assertFailure(deleteRecord(baby, completed, token(member), "0", 404));
+        }
+        assertFailure(edit(deletedBaby, completed, token(owner), "{\"version\":0,\"memo\":\"x\"}", 404));
+        assertFailure(deleteRecord(deletedBaby, completed, token(owner), "0", 404));
+        assertFailure(edit(otherBaby, completed, token(owner), "{\"version\":0,\"memo\":\"x\"}", 404));
+        assertFailure(deleteRecord(otherBaby, completed, token(owner), "0", 404));
+        assertFailure(edit(baby, Long.MAX_VALUE, token(owner), "{\"version\":0,\"memo\":\"x\"}", 404));
+        assertFailure(deleteRecord(baby, Long.MAX_VALUE, token(owner), "0", 404));
+        assertFailure(edit(0, completed, token(owner), "{\"version\":0,\"memo\":\"x\"}", 400));
+        assertFailure(deleteRecord(baby, 0, token(owner), "0", 400));
+        assertFailure(edit(baby, completed, null, "{\"version\":0,\"memo\":\"x\"}", 401));
+        assertFailure(deleteRecord(baby, completed, null, "0", 401));
+        assertFailure(edit(baby, completed, token(Long.MAX_VALUE), "{\"version\":0,\"memo\":\"x\"}", 401));
+        String withdrawn = token(insertMember(true));
+        assertFailure(edit(baby, completed, withdrawn, "{\"version\":0,\"memo\":\"x\"}", 403));
+        assertFailure(deleteRecord(baby, completed, withdrawn, "0", 403));
+        assertThat(edit(baby, completed, token(caregiver), "{\"version\":0,\"memo\":\"caregiver\"}", 200)
+                .path("data").path("memo").asText()).isEqualTo("caregiver");
+    }
+
+    @Test
+    void concurrentEditsAndEditDeleteNeverOverwriteWinningVersion() throws Exception {
+        long owner = insertMember(false);
+        long caregiver = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        long id = created(baby, owner, "{\"recordType\":\"OTHER\","
+                + "\"recordedAt\":\"2026-10-04T10:00:00+09:00\","
+                + "\"detail\":{\"title\":\"일상\"}}", "OTHER").path("recordId").asLong();
+        assertThat(concurrently(
+                () -> editAnyStatus(baby, id, token(owner), "{\"version\":0,\"memo\":\"A\"}"),
+                () -> editAnyStatus(baby, id, token(caregiver), "{\"version\":0,\"memo\":\"B\"}")))
+                .containsExactlyInAnyOrder(200, 409);
+        assertThat(detail(baby, id, token(owner), 200).path("data").path("version").asLong()).isEqualTo(1);
+        List<Integer> editDelete = concurrently(
+                () -> editAnyStatus(baby, id, token(owner), "{\"version\":1,\"memo\":\"C\"}"),
+                () -> deleteAnyStatus(baby, id, token(caregiver), "1"));
+        assertThat(editDelete.stream().filter(code -> code == 200).count()).isEqualTo(1);
+        assertThat(editDelete.stream().filter(code -> code == 409 || code == 404).count()).isEqualTo(1);
+        String state = jdbc.queryForObject("SELECT is_deleted FROM care_record WHERE record_id = ?",
+                Boolean.class, id) ? "DELETED" : "VISIBLE";
+        if (state.equals("VISIBLE")) {
+            assertThat(detail(baby, id, token(owner), 200).path("data").path("memo").asText()).isEqualTo("C");
+        } else {
+            assertFailure(detail(baby, id, token(owner), 404));
+        }
+    }
+
+    @Test
+    void concurrentDeletesHaveOneWinnerAndKeepDetailRow() throws Exception {
+        long owner = insertMember(false);
+        long caregiver = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        long id = created(baby, owner, "{\"recordType\":\"OTHER\","
+                + "\"recordedAt\":\"2026-10-04T10:00:00+09:00\","
+                + "\"detail\":{\"title\":\"일상\"}}", "OTHER").path("recordId").asLong();
+        List<Integer> outcomes = concurrently(
+                () -> deleteAnyStatus(baby, id, token(owner), "0"),
+                () -> deleteAnyStatus(baby, id, token(caregiver), "0"));
+        assertThat(outcomes.stream().filter(code -> code == 200).count()).isEqualTo(1);
+        assertThat(outcomes.stream().filter(code -> code == 409 || code == 404).count()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT is_deleted FROM care_record WHERE record_id = ?",
+                Boolean.class, id)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM other_detail WHERE record_id = ?",
+                Integer.class, id)).isEqualTo(1);
     }
 
     @Test
@@ -773,6 +1071,36 @@ class CareRecordMariaDbIntegrationTest {
         if (jwt != null) request.header("Authorization", "Bearer " + jwt);
         return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
                 .andReturn().getResponse().getContentAsString());
+    }
+
+    private JsonNode edit(long babyId, long recordId, String jwt, String body, int expectedStatus) throws Exception {
+        var request = patch("/api/v1/babies/{babyId}/records/{recordId}", babyId, recordId)
+                .contentType(MediaType.APPLICATION_JSON).content(body);
+        if (jwt != null) request.header("Authorization", "Bearer " + jwt);
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private int editAnyStatus(long babyId, long recordId, String jwt, String body) throws Exception {
+        return mvc.perform(patch("/api/v1/babies/{babyId}/records/{recordId}", babyId, recordId)
+                        .header("Authorization", "Bearer " + jwt)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andReturn().getResponse().getStatus();
+    }
+
+    private JsonNode deleteRecord(long babyId, long recordId, String jwt, String version, int expectedStatus)
+            throws Exception {
+        var request = delete("/api/v1/babies/{babyId}/records/{recordId}", babyId, recordId);
+        if (version != null) request.param("version", version);
+        if (jwt != null) request.header("Authorization", "Bearer " + jwt);
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private int deleteAnyStatus(long babyId, long recordId, String jwt, String version) throws Exception {
+        return mvc.perform(delete("/api/v1/babies/{babyId}/records/{recordId}", babyId, recordId)
+                        .header("Authorization", "Bearer " + jwt).param("version", version))
+                .andReturn().getResponse().getStatus();
     }
 
     private int startAnyStatus(long babyId, String jwt, String body) throws Exception {
