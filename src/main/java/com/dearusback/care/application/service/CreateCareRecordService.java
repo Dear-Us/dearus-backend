@@ -1,7 +1,9 @@
 package com.dearusback.care.application.service;
 
 import com.dearusback.care.application.model.CreateCareRecordCommand;
+import com.dearusback.care.application.model.RecordChangedEvent;
 import com.dearusback.care.application.port.in.CreateCareRecordUseCase;
+import com.dearusback.care.application.port.out.RecordChangePublisher;
 import com.dearusback.care.domain.exception.CareErrorCode;
 import com.dearusback.care.domain.exception.CareException;
 import com.dearusback.care.domain.model.CareRecord;
@@ -19,13 +21,15 @@ public class CreateCareRecordService implements CreateCareRecordUseCase {
     private final ActiveBabyMembershipAccess babies;
     private final CareRecordRepository records;
     private final Clock clock;
+    private final RecordChangePublisher changes;
 
     public CreateCareRecordService(BabyRegistrationMemberAccess members, ActiveBabyMembershipAccess babies,
-                                   CareRecordRepository records, Clock clock) {
+                                   CareRecordRepository records, Clock clock, RecordChangePublisher changes) {
         this.members = members;
         this.babies = babies;
         this.records = records;
         this.clock = clock;
+        this.changes = changes;
     }
 
     @Override
@@ -41,6 +45,8 @@ public class CreateCareRecordService implements CreateCareRecordUseCase {
         } catch (IllegalArgumentException exception) {
             throw new CareException(CareErrorCode.INVALID_RECORD);
         }
-        return records.save(record);
+        CareRecord saved = records.save(record);
+        changes.publish(RecordChangedEvent.from(RecordChangedEvent.EventType.RECORD_CREATED, saved));
+        return saved;
     }
 }

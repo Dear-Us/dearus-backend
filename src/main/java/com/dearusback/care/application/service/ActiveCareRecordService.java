@@ -1,8 +1,10 @@
 package com.dearusback.care.application.service;
 
+import com.dearusback.care.application.model.RecordChangedEvent;
 import com.dearusback.care.application.model.StartCareRecordCommand;
 import com.dearusback.care.application.port.in.ActiveCareRecordUseCase;
 import com.dearusback.care.application.port.out.CareRecordQueryPort;
+import com.dearusback.care.application.port.out.RecordChangePublisher;
 import com.dearusback.care.domain.exception.CareErrorCode;
 import com.dearusback.care.domain.exception.CareException;
 import com.dearusback.care.domain.model.CareRecord;
@@ -25,14 +27,17 @@ public class ActiveCareRecordService implements ActiveCareRecordUseCase {
     private final CareRecordRepository records;
     private final CareRecordQueryPort queries;
     private final Clock clock;
+    private final RecordChangePublisher changes;
 
     public ActiveCareRecordService(BabyRegistrationMemberAccess members, ActiveBabyMembershipAccess babies,
-                                   CareRecordRepository records, CareRecordQueryPort queries, Clock clock) {
+                                   CareRecordRepository records, CareRecordQueryPort queries, Clock clock,
+                                   RecordChangePublisher changes) {
         this.members = members;
         this.babies = babies;
         this.records = records;
         this.queries = queries;
         this.clock = clock;
+        this.changes = changes;
     }
 
     @Override
@@ -60,7 +65,9 @@ public class ActiveCareRecordService implements ActiveCareRecordUseCase {
             throw new CareException(CareErrorCode.INVALID_RECORD);
         }
         try {
-            return records.save(record);
+            CareRecord saved = records.save(record);
+            changes.publish(RecordChangedEvent.from(RecordChangedEvent.EventType.RECORD_STARTED, saved));
+            return saved;
         } catch (DataIntegrityViolationException exception) {
             if (activeUniqueViolation(exception)) {
                 throw new CareException(CareErrorCode.ACTIVE_RECORD_EXISTS);
@@ -81,7 +88,9 @@ public class ActiveCareRecordService implements ActiveCareRecordUseCase {
         } catch (IllegalStateException exception) {
             throw new CareException(CareErrorCode.RECORD_ALREADY_FINISHED);
         }
-        return records.updateTransition(changed).inZone(zone);
+        CareRecord saved = records.updateTransition(changed);
+        changes.publish(RecordChangedEvent.from(RecordChangedEvent.EventType.RECORD_COMPLETED, saved));
+        return saved.inZone(zone);
     }
 
     @Override
@@ -96,7 +105,8 @@ public class ActiveCareRecordService implements ActiveCareRecordUseCase {
         } catch (IllegalStateException exception) {
             throw new CareException(CareErrorCode.RECORD_ALREADY_FINISHED);
         }
-        records.updateTransition(changed);
+        CareRecord saved = records.updateTransition(changed);
+        changes.publish(RecordChangedEvent.from(RecordChangedEvent.EventType.RECORD_CANCELED, saved));
     }
 
     private CareRecord locked(Long babyId, Long recordId) {

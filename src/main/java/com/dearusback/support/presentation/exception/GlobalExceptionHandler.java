@@ -8,6 +8,7 @@ import org.springframework.beans.TypeMismatchException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -25,6 +26,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException exception) {
         return ResponseEntity
                 .status(toHttpStatus(exception.errorCode().type()))
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.failure(exception.errorCode()));
     }
 
@@ -33,6 +35,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(Exception exception) {
         return ResponseEntity
                 .badRequest()
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.failure(CommonErrorCode.INVALID_REQUEST));
     }
 
@@ -40,6 +43,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleOversizedUpload(MaxUploadSizeExceededException exception) {
         return ResponseEntity
                 .status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.failure(CommonErrorCode.PAYLOAD_TOO_LARGE));
     }
 
@@ -48,6 +52,7 @@ public class GlobalExceptionHandler {
         log.error("Unexpected exception", exception);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.failure(CommonErrorCode.INTERNAL_SERVER_ERROR));
     }
 

@@ -1,7 +1,9 @@
 package com.dearusback.care.application.service;
 
 import com.dearusback.care.application.model.EditCareRecordCommand;
+import com.dearusback.care.application.model.RecordChangedEvent;
 import com.dearusback.care.application.port.in.EditCareRecordUseCase;
+import com.dearusback.care.application.port.out.RecordChangePublisher;
 import com.dearusback.care.domain.exception.CareErrorCode;
 import com.dearusback.care.domain.exception.CareException;
 import com.dearusback.care.domain.model.CareRecord;
@@ -22,13 +24,15 @@ public class EditCareRecordService implements EditCareRecordUseCase {
     private final ActiveBabyMembershipAccess babies;
     private final CareRecordRepository records;
     private final Clock clock;
+    private final RecordChangePublisher changes;
 
     public EditCareRecordService(BabyRegistrationMemberAccess members, ActiveBabyMembershipAccess babies,
-                                 CareRecordRepository records, Clock clock) {
+                                 CareRecordRepository records, Clock clock, RecordChangePublisher changes) {
         this.members = members;
         this.babies = babies;
         this.records = records;
         this.clock = clock;
+        this.changes = changes;
     }
 
     @Override
@@ -52,7 +56,9 @@ public class EditCareRecordService implements EditCareRecordUseCase {
             throw new CareException(CareErrorCode.INVALID_RECORD);
         }
         try {
-            return records.updateCompleted(changed, command.detail() != null).inZone(zone);
+            CareRecord saved = records.updateCompleted(changed, command.detail() != null);
+            changes.publish(RecordChangedEvent.from(RecordChangedEvent.EventType.RECORD_UPDATED, saved));
+            return saved.inZone(zone);
         } catch (OptimisticLockingFailureException exception) {
             throw new CareException(CareErrorCode.RECORD_VERSION_CONFLICT);
         }
@@ -66,7 +72,8 @@ public class EditCareRecordService implements EditCareRecordUseCase {
         CareRecord existing = find(babyId, recordId);
         requireEditable(existing, version);
         try {
-            records.updateCompleted(existing.softDelete(memberId, clock.instant()), false);
+            CareRecord saved = records.updateCompleted(existing.softDelete(memberId, clock.instant()), false);
+            changes.publish(RecordChangedEvent.from(RecordChangedEvent.EventType.RECORD_DELETED, saved));
         } catch (OptimisticLockingFailureException exception) {
             throw new CareException(CareErrorCode.RECORD_VERSION_CONFLICT);
         }
