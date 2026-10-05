@@ -1,6 +1,8 @@
 package com.dearusback.care.presentation.dto;
 
+import com.dearusback.care.application.model.CareRecordView;
 import com.dearusback.care.domain.model.CareRecord;
+import com.dearusback.care.domain.model.CareRecord.Detail;
 import com.dearusback.care.domain.model.CareRecord.BreastSide;
 import com.dearusback.care.domain.model.CareRecord.CareRecordInputType;
 import com.dearusback.care.domain.model.CareRecord.CareRecordStatus;
@@ -23,7 +25,19 @@ public record CareRecordResponse(Long recordId, Long babyId, CareRecordType reco
                                  String memo, Object detail, long version) {
 
     public static CareRecordResponse from(CareRecord record) {
-        Object detail = switch (record.detail()) {
+        return new CareRecordResponse(record.id(), record.babyId(), record.recordType(), record.inputType(),
+                record.status(), record.recordedAt(), record.startAt(), record.endAt(), record.memo(),
+                detail(record.detail()), record.version());
+    }
+
+    public static CareRecordResponse from(CareRecordView record) {
+        return new CareRecordResponse(record.recordId(), record.babyId(), record.recordType(), record.inputType(),
+                record.status(), record.recordedAt(), record.startAt(), record.endAt(), record.memo(),
+                detail(record.detail()), record.version());
+    }
+
+    private static Object detail(Detail raw) {
+        return switch (raw) {
             case FeedingDetail feeding when feeding.feedingType() == FeedingType.FORMULA ->
                     new FormulaResponse(feeding.feedingType(), feeding.amountMl());
             case FeedingDetail feeding -> new BreastfeedingResponse(feeding.feedingType(), feeding.breastSide(),
@@ -36,9 +50,6 @@ public record CareRecordResponse(Long recordId, Long babyId, CareRecordType reco
             case OtherDetail other -> new OtherResponse(other.title());
             case null -> null;
         };
-        return new CareRecordResponse(record.id(), record.babyId(), record.recordType(), record.inputType(),
-                record.status(), record.recordedAt(), record.startAt(), record.endAt(), record.memo(),
-                detail, record.version());
     }
 
     public record FormulaResponse(FeedingType feedingType, int amountMl) { }
