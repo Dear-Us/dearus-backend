@@ -17,10 +17,16 @@ public class SecurityConfiguration {
     @Order(1)
     SecurityFilterChain publicAuthEndpoints(HttpSecurity http) throws Exception {
         return http
-                .securityMatcher(request -> "POST".equals(request.getMethod()) && switch (
-                        request.getRequestURI().substring(request.getContextPath().length())) {
-                    case "/api/v1/auth/login", "/api/v1/auth/reissue", "/api/v1/auth/logout" -> true;
-                    default -> false;
+                .securityMatcher(request -> {
+                    String path = request.getRequestURI().substring(request.getContextPath().length());
+                    if ("GET".equals(request.getMethod())
+                            && path.matches("/api/v1/invitations/[^/]+")) {
+                        return true;
+                    }
+                    return "POST".equals(request.getMethod()) && switch (path) {
+                        case "/api/v1/auth/login", "/api/v1/auth/reissue", "/api/v1/auth/logout" -> true;
+                        default -> false;
+                    };
                 })
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

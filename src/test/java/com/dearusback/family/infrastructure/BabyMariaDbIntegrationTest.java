@@ -1196,6 +1196,270 @@ class BabyMariaDbIntegrationTest {
         assertThat(selectedBaby(owner)).isNull();
     }
 
+    @Test
+    void invitationListCancelAndPublicPreviewPreserveHistoryAndMembership() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        var memberBefore = memberStateRow(owner);
+        var membershipBefore = membershipRow(baby, owner);
+        JsonNode created = createInvitation(Long.toString(baby), token(owner), 201);
+        long id = created.path("data").path("invitationId").asLong();
+        String raw = rawInvitationToken(created);
+
+        JsonNode list = listInvitations(Long.toString(baby), token(owner), 200);
+        assertThat(list.path("success").asBoolean()).isTrue();
+        assertThat(list.path("message").isNull()).isTrue();
+        assertThat(list.path("data").size()).isEqualTo(1);
+        JsonNode entry = list.path("data").get(0);
+        assertThat(entry.size()).isEqualTo(7);
+        assertThat(entry.path("invitationId").asLong()).isEqualTo(id);
+        assertThat(entry.path("role").asText()).isEqualTo("CAREGIVER");
+        assertThat(entry.path("status").asText()).isEqualTo("PENDING");
+        assertThat(OffsetDateTime.parse(entry.path("createdAt").asText()).getOffset().getTotalSeconds())
+                .isEqualTo(9 * 3600);
+        assertThat(OffsetDateTime.parse(entry.path("expiresAt").asText()).toInstant())
+                .isEqualTo(OffsetDateTime.parse(entry.path("createdAt").asText()).toInstant()
+                        .plusSeconds(72 * 3600));
+        assertThat(entry.path("acceptedAt").isNull()).isTrue();
+        assertThat(entry.path("canceledAt").isNull()).isTrue();
+        for (String hidden : List.of("token", "tokenHash", "invitationUrl", "createdByMemberId",
+                "acceptedByMemberId", "babyId")) {
+            assertThat(entry.has(hidden)).isFalse();
+        }
+        assertThat(list.toString()).doesNotContain(raw);
+        assertThat(list.has("errorCode")).isFalse();
+
+        JsonNode pending = previewInvitation(raw, 200);
+        assertPreview(pending, "도윤", "PENDING");
+        assertThat(pending.path("data").path("babyProfileImageUrl").isNull()).isTrue();
+
+        assertDeleted(cancelInvitation(Long.toString(baby), Long.toString(id), token(owner), 200));
+        Timestamp canceledAt = jdbc.queryForObject("SELECT canceled_at FROM baby_invitation WHERE invitation_id = ?",
+                Timestamp.class, id);
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, id)).isEqualTo("CANCELED");
+        assertDeleted(cancelInvitation(Long.toString(baby), Long.toString(id), token(owner), 200));
+        assertThat(jdbc.queryForObject("SELECT canceled_at FROM baby_invitation WHERE invitation_id = ?",
+                Timestamp.class, id)).isEqualTo(canceledAt);
+        JsonNode canceledEntry = listInvitations(Long.toString(baby), token(owner), 200)
+                .path("data").get(0);
+        assertThat(canceledEntry.path("status").asText()).isEqualTo("CANCELED");
+        assertThat(OffsetDateTime.parse(canceledEntry.path("canceledAt").asText()).toInstant())
+                .isEqualTo(canceledAt.toLocalDateTime().toInstant(ZoneOffset.UTC));
+        assertPreview(previewInvitation(raw, 200), "도윤", "CANCELED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baby_invitation WHERE invitation_id = ?",
+                Integer.class, id)).isEqualTo(1);
+        assertThat(memberStateRow(owner)).isEqualTo(memberBefore);
+        assertThat(membershipRow(baby, owner)).isEqualTo(membershipBefore);
+    }
+
+    @Test
+    void invitationListIsEmptyThenOrderedByCreatedAtAndIdDescending() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        assertThat(listInvitations(Long.toString(baby), token(owner), 200).path("data").size()).isZero();
+        long first = createInvitation(Long.toString(baby), token(owner), 201)
+                .path("data").path("invitationId").asLong();
+        long second = createInvitation(Long.toString(baby), token(owner), 201)
+                .path("data").path("invitationId").asLong();
+        long third = createInvitation(Long.toString(baby), token(owner), 201)
+                .path("data").path("invitationId").asLong();
+        Instant old = Instant.now().minusSeconds(30);
+        Instant tied = Instant.now().minusSeconds(10);
+        jdbc.update("UPDATE baby_invitation SET created_at = ? WHERE invitation_id = ?", Timestamp.from(old), third);
+        jdbc.update("UPDATE baby_invitation SET created_at = ? WHERE invitation_id = ?", Timestamp.from(tied), first);
+        jdbc.update("UPDATE baby_invitation SET created_at = ? WHERE invitation_id = ?", Timestamp.from(tied), second);
+        JsonNode entries = listInvitations(Long.toString(baby), token(owner), 200).path("data");
+        assertThat(entries.size()).isEqualTo(3);
+        assertThat(entries.get(0).path("invitationId").asLong()).isEqualTo(second);
+        assertThat(entries.get(1).path("invitationId").asLong()).isEqualTo(first);
+        assertThat(entries.get(2).path("invitationId").asLong()).isEqualTo(third);
+    }
+
+    @Test
+    void invitationListAndPreviewPersistExpiredAndReturnAccepted() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", "https://example.com/baby.png",
+                false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        JsonNode expired = createInvitation(Long.toString(baby), token(owner), 201);
+        long expiredId = expired.path("data").path("invitationId").asLong();
+        expireInvitationInDatabase(expiredId);
+        JsonNode accepted = createInvitation(Long.toString(baby), token(owner), 201);
+        long acceptedId = accepted.path("data").path("invitationId").asLong();
+        jdbc.update("UPDATE baby_invitation SET status = 'ACCEPTED', accepted_by_member_id = ?, "
+                + "accepted_at = ? WHERE invitation_id = ?", owner, Timestamp.from(Instant.now()), acceptedId);
+        expireInvitationInDatabase(acceptedId);
+
+        JsonNode entries = listInvitations(Long.toString(baby), token(owner), 200).path("data");
+        assertThat(entries.size()).isEqualTo(2);
+        assertThat(entries.get(0).path("status").asText()).isEqualTo("ACCEPTED");
+        assertThat(entries.get(0).path("acceptedAt").isNull()).isFalse();
+        assertThat(entries.get(1).path("status").asText()).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, expiredId)).isEqualTo("EXPIRED");
+        assertPreview(previewInvitation(rawInvitationToken(expired), 200), "도윤", "EXPIRED");
+        assertPreview(previewInvitation(rawInvitationToken(accepted), 200), "도윤", "ACCEPTED");
+        assertThat(previewInvitation(rawInvitationToken(accepted), 200).path("data")
+                .path("babyProfileImageUrl").asText()).isEqualTo("https://example.com/baby.png");
+    }
+
+    @Test
+    void publicPreviewItselfPersistsExpiredStatusWithoutAuthentication() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        JsonNode created = createInvitation(Long.toString(baby), token(owner), 201);
+        long id = created.path("data").path("invitationId").asLong();
+        expireInvitationInDatabase(id);
+        assertPreview(previewInvitation(rawInvitationToken(created), 200), "도윤", "EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, id)).isEqualTo("EXPIRED");
+    }
+
+    @Test
+    void cancelRejectsAcceptedExpiredAndExpiredPendingWithoutOverwritingState() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        long accepted = createInvitation(Long.toString(baby), token(owner), 201)
+                .path("data").path("invitationId").asLong();
+        long expired = createInvitation(Long.toString(baby), token(owner), 201)
+                .path("data").path("invitationId").asLong();
+        long stale = createInvitation(Long.toString(baby), token(owner), 201)
+                .path("data").path("invitationId").asLong();
+        jdbc.update("UPDATE baby_invitation SET status = 'ACCEPTED', accepted_at = ? WHERE invitation_id = ?",
+                Timestamp.from(Instant.now()), accepted);
+        jdbc.update("UPDATE baby_invitation SET status = 'EXPIRED' WHERE invitation_id = ?", expired);
+        expireInvitationInDatabase(stale);
+        for (long id : new long[]{accepted, expired, stale}) {
+            assertFailure(cancelInvitation(Long.toString(baby), Long.toString(id), token(owner), 409));
+            assertThat(jdbc.queryForObject("SELECT canceled_at FROM baby_invitation WHERE invitation_id = ?",
+                    Timestamp.class, id)).isNull();
+        }
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, accepted)).isEqualTo("ACCEPTED");
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, expired)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, stale)).isEqualTo("EXPIRED");
+    }
+
+    @Test
+    void invitationManagementEnforcesOwnerAndConcealsOtherBabies() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        long outsider = insertMember("Asia/Seoul", false);
+        long left = insertMember("Asia/Seoul", false);
+        long removed = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        long other = insertBaby(owner, "다른 아기", "2020-01-01", "MALE", null, false, Instant.now());
+        long deleted = insertBaby(owner, "삭제", "2020-01-01", "MALE", null, true, Instant.now());
+        for (long id : new long[]{baby, other, deleted}) {
+            insertMembership(id, owner, "OWNER", "ACTIVE");
+        }
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        long invitationId = createInvitation(Long.toString(other), token(owner), 201)
+                .path("data").path("invitationId").asLong();
+        assertFailure(listInvitations(Long.toString(baby), token(caregiver), 403));
+        assertFailure(cancelInvitation(Long.toString(baby), Long.toString(invitationId), token(caregiver), 403));
+        for (long requester : new long[]{outsider, left, removed}) {
+            assertFailure(listInvitations(Long.toString(baby), token(requester), 404));
+            assertFailure(cancelInvitation(Long.toString(baby), Long.toString(invitationId),
+                    token(requester), 404));
+        }
+        assertFailure(listInvitations(Long.toString(deleted), token(owner), 404));
+        assertFailure(cancelInvitation(Long.toString(deleted), Long.toString(invitationId), token(owner), 404));
+        assertFailure(listInvitations(Long.toString(Long.MAX_VALUE), token(owner), 404));
+        assertFailure(cancelInvitation(Long.toString(baby), Long.toString(invitationId), token(owner), 404));
+        assertFailure(cancelInvitation(Long.toString(baby), Long.toString(Long.MAX_VALUE), token(owner), 404));
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, invitationId)).isEqualTo("PENDING");
+    }
+
+    @Test
+    void invitationEndpointSecurityValidationAndDeletedBabyPreview() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        JsonNode created = createInvitation(Long.toString(baby), token(owner), 201);
+        long id = created.path("data").path("invitationId").asLong();
+        String raw = rawInvitationToken(created);
+        for (String invalid : List.of("0", "-1", "not-a-number")) {
+            assertFailure(cancelInvitation(invalid, Long.toString(id), token(owner), 400));
+            assertFailure(cancelInvitation(Long.toString(baby), invalid, token(owner), 400));
+        }
+        for (String jwt : new String[]{null, "invalid.jwt", expiredToken(owner), token(Long.MAX_VALUE)}) {
+            assertFailure(createInvitation(Long.toString(baby), jwt, 401));
+            assertFailure(listInvitations(Long.toString(baby), jwt, 401));
+            assertFailure(cancelInvitation(Long.toString(baby), Long.toString(id), jwt, 401));
+        }
+        String withdrawn = token(insertMember("Asia/Seoul", true));
+        assertFailure(listInvitations(Long.toString(baby), withdrawn, 403));
+        assertFailure(cancelInvitation(Long.toString(baby), Long.toString(id), withdrawn, 403));
+        assertFailure(previewInvitation("nonexistent-token", 404));
+        assertFailure(previewInvitation("invalid.token", 404));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .post("/api/v1/invitations/{token}", raw)).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/invitations/{token}/extra", raw)).andExpect(status().isUnauthorized());
+        jdbc.update("UPDATE baby SET is_deleted = true, deleted_at = ?, updated_at = ? WHERE baby_id = ?",
+                Timestamp.from(Instant.now()), Timestamp.from(Instant.now()), baby);
+        assertFailure(previewInvitation(raw, 404));
+        assertThat(jdbc.queryForObject("SELECT status FROM baby_invitation WHERE invitation_id = ?",
+                String.class, id)).isEqualTo("PENDING");
+    }
+
+    private void expireInvitationInDatabase(long invitationId) {
+        Instant old = Instant.now().minusSeconds(10 * 24 * 3600);
+        jdbc.update("UPDATE baby_invitation SET created_at = ?, expires_at = ? WHERE invitation_id = ?",
+                Timestamp.from(old), Timestamp.from(old.plusSeconds(72 * 3600)), invitationId);
+    }
+
+    private JsonNode listInvitations(String babyId, String jwt, int expectedStatus) throws Exception {
+        var request = get("/api/v1/babies/{babyId}/invitations", babyId);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private JsonNode cancelInvitation(String babyId, String invitationId, String jwt,
+                                      int expectedStatus) throws Exception {
+        var request = delete("/api/v1/babies/{babyId}/invitations/{invitationId}", babyId, invitationId);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private JsonNode previewInvitation(String rawToken, int expectedStatus) throws Exception {
+        return mapper.readTree(mvc.perform(get("/api/v1/invitations/{token}", rawToken))
+                .andExpect(status().is(expectedStatus)).andReturn().getResponse().getContentAsString());
+    }
+
+    private void assertPreview(JsonNode response, String babyName, String expectedStatus) {
+        assertThat(response.path("success").asBoolean()).isTrue();
+        assertThat(response.path("message").isNull()).isTrue();
+        assertThat(response.has("errorCode")).isFalse();
+        JsonNode data = response.path("data");
+        assertThat(data.size()).isEqualTo(5);
+        assertThat(data.path("babyName").asText()).isEqualTo(babyName);
+        assertThat(data.path("role").asText()).isEqualTo("CAREGIVER");
+        assertThat(data.path("status").asText()).isEqualTo(expectedStatus);
+        assertThat(OffsetDateTime.parse(data.path("expiresAt").asText()).getOffset().getTotalSeconds())
+                .isEqualTo(9 * 3600);
+        for (String hidden : List.of("babyId", "invitationId", "token", "tokenHash", "createdByMemberId",
+                "acceptedByMemberId")) {
+            assertThat(data.has(hidden)).isFalse();
+        }
+    }
+
     private JsonNode createInvitation(String babyId, String jwt, int expectedStatus) throws Exception {
         var request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .post("/api/v1/babies/{babyId}/invitations", babyId);
@@ -1462,6 +1726,15 @@ class BabyMariaDbIntegrationTest {
         JwtClaimsSet claims = JwtClaimsSet.builder().issuer("dearus")
                 .subject(Long.toString(memberId)).issuedAt(now.minusSeconds(1))
                 .expiresAt(now.plusSeconds(300)).build();
+        return encoder.encode(JwtEncoderParameters.from(JwsHeader.with(MacAlgorithm.HS256).type("JWT").build(),
+                claims)).getTokenValue();
+    }
+
+    private String expiredToken(long memberId) {
+        Instant now = Instant.now();
+        JwtClaimsSet claims = JwtClaimsSet.builder().issuer("dearus")
+                .subject(Long.toString(memberId)).issuedAt(now.minusSeconds(600))
+                .expiresAt(now.minusSeconds(300)).build();
         return encoder.encode(JwtEncoderParameters.from(JwsHeader.with(MacAlgorithm.HS256).type("JWT").build(),
                 claims)).getTokenValue();
     }
