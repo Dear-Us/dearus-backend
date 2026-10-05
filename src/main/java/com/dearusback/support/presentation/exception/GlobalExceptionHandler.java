@@ -5,6 +5,7 @@ import com.dearusback.support.domain.exception.BusinessException;
 import com.dearusback.support.domain.exception.ErrorType;
 import com.dearusback.support.presentation.response.ApiResponse;
 import org.springframework.beans.TypeMismatchException;
+import org.springframework.dao.CannotAcquireLockException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -45,6 +46,14 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.failure(CommonErrorCode.PAYLOAD_TOO_LARGE));
+    }
+
+    @ExceptionHandler(CannotAcquireLockException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConcurrentRequest(CannotAcquireLockException exception) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.failure(CommonErrorCode.CONCURRENT_REQUEST));
     }
 
     @ExceptionHandler(Exception.class)

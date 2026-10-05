@@ -1723,7 +1723,7 @@ class BabyMariaDbIntegrationTest {
             });
             assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
             start.countDown();
-            assertThat(acceptance.get(20, TimeUnit.SECONDS)).isIn(200, 404);
+            assertThat(acceptance.get(20, TimeUnit.SECONDS)).isIn(200, 404, 409);
             assertThat(deletion.get(20, TimeUnit.SECONDS)).isEqualTo(200);
         }
         assertThat(jdbc.queryForObject("SELECT is_deleted FROM baby WHERE baby_id = ?",
