@@ -1,6 +1,5 @@
-package com.dearusback.care.presentation.dto;
+package com.dearusback.care.application.model;
 
-import com.dearusback.care.application.model.CareRecordView;
 import com.dearusback.care.domain.model.CareRecord;
 import com.dearusback.care.domain.model.CareRecord.Detail;
 import com.dearusback.care.domain.model.CareRecord.BreastSide;

@@ -102,6 +102,25 @@ public class CareRecordQueryAdapter implements CareRecordQueryPort {
         return loaded.stream().findFirst();
     }
 
+    @Override
+    public Map<CareRecordType, Long> countCompletedByType(Long babyId, Instant startInclusive,
+                                                           Instant endExclusive) {
+        Map<CareRecordType, Long> counts = new EnumMap<>(CareRecordType.class);
+        jdbc.query("SELECT record_type, COUNT(*) AS record_count FROM care_record WHERE baby_id = ?" + COMPLETED
+                        + " AND recorded_at >= ? AND recorded_at < ? GROUP BY record_type",
+                (RowCallbackHandler) result -> counts.put(CareRecordType.valueOf(result.getString("record_type")),
+                        result.getLong("record_count")), babyId, utcTime(startInclusive), utcTime(endExclusive));
+        return counts;
+    }
+
+    @Override
+    public List<CareRecordView> findRecentCompletedRecords(Long babyId, int limit) {
+        List<CareRecordView> rows = jdbc.query("SELECT " + FIELDS + " FROM care_record WHERE baby_id = ?"
+                        + COMPLETED + " ORDER BY recorded_at DESC, record_id DESC LIMIT ?",
+                (result, index) -> row(result), babyId, limit);
+        return attachDetails(rows);
+    }
+
     private List<CareRecordView> attachDetails(List<CareRecordView> rows) {
         if (rows.isEmpty()) {
             return rows;

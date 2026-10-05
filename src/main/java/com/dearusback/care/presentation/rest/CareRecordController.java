@@ -8,7 +8,7 @@ import com.dearusback.care.application.model.CalendarDayCount;
 import com.dearusback.care.domain.model.CareRecord.CareRecordType;
 import com.dearusback.care.domain.exception.CareErrorCode;
 import com.dearusback.care.domain.exception.CareException;
-import com.dearusback.care.presentation.dto.CareRecordResponse;
+import com.dearusback.care.application.model.CareRecordResponse;
 import com.dearusback.care.presentation.dto.CreateCareRecordRequest;
 import com.dearusback.care.presentation.dto.StartCareRecordRequest;
 import com.dearusback.care.presentation.dto.EditCareRecordRequest;

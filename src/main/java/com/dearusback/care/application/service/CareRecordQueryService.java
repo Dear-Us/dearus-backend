@@ -2,6 +2,8 @@ package com.dearusback.care.application.service;
 
 import com.dearusback.care.application.model.CalendarDayCount;
 import com.dearusback.care.application.model.CareRecordView;
+import com.dearusback.care.application.model.CareHomeSnapshot;
+import com.dearusback.care.application.model.CareTypeCounts;
 import com.dearusback.care.application.port.in.CareRecordQueryUseCase;
 import com.dearusback.care.application.port.out.CareRecordQueryPort;
 import com.dearusback.care.domain.exception.CareErrorCode;
@@ -68,6 +70,16 @@ public class CareRecordQueryService implements CareRecordQueryUseCase {
     public CareRecordView active(Long memberId, Long babyId) {
         ZoneId zone = accessibleZone(memberId, babyId);
         return records.findActiveRecord(babyId).map(record -> record.inZone(zone)).orElse(null);
+    }
+
+    @Override
+    public CareHomeSnapshot homeData(Long babyId, Instant todayStartInclusive, Instant tomorrowStartExclusive,
+                                     ZoneId zone) {
+        CareRecordView active = records.findActiveRecord(babyId).map(record -> record.inZone(zone)).orElse(null);
+        var counts = records.countCompletedByType(babyId, todayStartInclusive, tomorrowStartExclusive);
+        var recent = records.findRecentCompletedRecords(babyId, 5).stream()
+                .map(record -> record.inZone(zone)).toList();
+        return new CareHomeSnapshot(active, CareTypeCounts.from(counts), recent);
     }
 
     private ZoneId timezone(Long memberId) {
