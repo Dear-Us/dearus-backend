@@ -13,4 +13,6 @@ public interface CareRecordQueryPort {
     List<Instant> findCompletedRecordedTimes(Long babyId, Instant startInclusive, Instant endExclusive);
 
     Optional<CareRecordView> findCompletedRecord(Long babyId, Long recordId);
+
+    Optional<CareRecordView> findActiveRecord(Long babyId);
 }

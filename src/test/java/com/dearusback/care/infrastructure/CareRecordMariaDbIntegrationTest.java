@@ -1,6 +1,7 @@
 package com.dearusback.care.infrastructure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -8,6 +9,7 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -21,11 +23,17 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -68,6 +76,199 @@ class CareRecordMariaDbIntegrationTest {
     @Autowired JwtEncoder encoder;
     @Autowired ObjectMapper mapper;
     @MockitoSpyBean NamedParameterJdbcTemplate named;
+
+    @Test
+    void activeSleepFlowAndUniqueConstraintWorkOnMariaDb() throws Exception {
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history "
+                + "WHERE version = '6' AND success = 1", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_schema.statistics "
+                + "WHERE table_schema = database() AND table_name = 'care_record' "
+                + "AND index_name = 'uk_care_record_active_baby'", Integer.class)).isPositive();
+        long owner = insertMember(false);
+        long caregiver = insertMember(false);
+        long baby = insertBaby(owner, false);
+        long otherBaby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        insertMembership(otherBaby, owner, "OWNER", "ACTIVE");
+        assertSuccess(active(baby, token(owner), 200));
+        assertThat(active(baby, token(owner), 200).path("data").isNull()).isTrue();
+
+        JsonNode started = start(baby, token(caregiver), "{\"recordType\":\"SLEEP\",\"memo\":null}", 201);
+        assertSuccess(started);
+        JsonNode data = started.path("data");
+        long id = data.path("recordId").asLong();
+        assertThat(data.path("status").asText()).isEqualTo("IN_PROGRESS");
+        assertThat(data.path("inputType").asText()).isEqualTo("MANUAL");
+        assertThat(data.path("recordedAt").asText()).isEqualTo(data.path("startAt").asText());
+        assertThat(data.path("endAt").isNull()).isTrue();
+        assertThat(data.path("detail").isNull()).isTrue();
+        assertThat(active(baby, token(owner), 200).path("data").path("recordId").asLong()).isEqualTo(id);
+        assertThat(active(otherBaby, token(owner), 200).path("data").isNull()).isTrue();
+        assertFailure(start(baby, token(owner), "{\"recordType\":\"SLEEP\"}", 409));
+        assertFailure(start(baby, token(owner), direct("LEFT"), 409));
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO care_record "
+                + "(baby_id, record_type, input_type, status, recorded_at, start_at, memo, "
+                + "created_by_member_id, last_updated_by_member_id, version, is_deleted, created_at, updated_at) "
+                + "SELECT baby_id, record_type, input_type, status, recorded_at, start_at, memo, "
+                + "created_by_member_id, last_updated_by_member_id, version, is_deleted, created_at, updated_at "
+                + "FROM care_record WHERE record_id = ?", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        JsonNode completed = transition(baby, id, token(owner), "complete", 200);
+        assertSuccess(completed);
+        assertThat(completed.path("data").path("status").asText()).isEqualTo("COMPLETED");
+        assertThat(completed.path("data").path("startAt").asText()).isEqualTo(data.path("startAt").asText());
+        assertThat(completed.path("data").path("recordedAt").asText()).isEqualTo(data.path("recordedAt").asText());
+        assertThat(completed.path("data").path("endAt").isNull()).isFalse();
+        assertThat(completed.path("data").path("version").asLong()).isEqualTo(1);
+        assertThat(jdbc.queryForMap("SELECT created_by_member_id, completed_by_member_id, "
+                + "last_updated_by_member_id FROM care_record WHERE record_id = ?", id))
+                .containsEntry("created_by_member_id", caregiver)
+                .containsEntry("completed_by_member_id", owner)
+                .containsEntry("last_updated_by_member_id", owner);
+        assertThat(active(baby, token(owner), 200).path("data").isNull()).isTrue();
+        String date = OffsetDateTime.parse(data.path("startAt").asText()).toLocalDate().toString();
+        assertThat(list(baby, token(owner), date, null, 200).path("data").toString()).contains("\"recordId\":" + id);
+        assertFailure(transition(baby, id, token(owner), "complete", 409));
+        assertFailure(transition(baby, id, token(owner), "cancel", 409));
+        assertThat(start(baby, token(owner), direct("RIGHT"), 201).path("data").path("recordId").asLong())
+                .isPositive();
+    }
+
+    @Test
+    void activeBreastfeedingCancelAndCompletionPreserveDetailsAndAudit() throws Exception {
+        long owner = insertMember(false);
+        long caregiver = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        JsonNode left = start(baby, token(owner), direct("LEFT"), 201).path("data");
+        long leftId = left.path("recordId").asLong();
+        assertThat(left.path("detail").path("durationMinutes").isNull()).isTrue();
+        assertThat(active(baby, token(caregiver), 200).path("data").path("detail")
+                .path("breastSide").asText()).isEqualTo("LEFT");
+        assertThat(jdbc.queryForMap("SELECT amount_ml, duration_minutes FROM feeding_detail WHERE record_id = ?", leftId))
+                .containsEntry("amount_ml", null).containsEntry("duration_minutes", null);
+        assertFailure(start(baby, token(owner), direct("RIGHT"), 409));
+        assertFailure(start(baby, token(owner), "{\"recordType\":\"SLEEP\"}", 409));
+
+        assertSuccess(transition(baby, leftId, token(caregiver), "cancel", 200));
+        assertThat(jdbc.queryForMap("SELECT status, end_at, completed_by_member_id, last_updated_by_member_id "
+                + "FROM care_record WHERE record_id = ?", leftId))
+                .containsEntry("status", "CANCELED").containsEntry("end_at", null)
+                .containsEntry("completed_by_member_id", null).containsEntry("last_updated_by_member_id", caregiver);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM feeding_detail WHERE record_id = ?",
+                Integer.class, leftId)).isEqualTo(1);
+        assertThat(active(baby, token(owner), 200).path("data").isNull()).isTrue();
+        String date = OffsetDateTime.parse(left.path("startAt").asText()).toLocalDate().toString();
+        assertThat(list(baby, token(owner), date, null, 200).path("data").toString())
+                .doesNotContain("\"recordId\":" + leftId);
+        assertFailure(transition(baby, leftId, token(owner), "complete", 409));
+        assertFailure(transition(baby, leftId, token(owner), "cancel", 409));
+
+        JsonNode right = start(baby, token(caregiver), direct("RIGHT"), 201).path("data");
+        long rightId = right.path("recordId").asLong();
+        jdbc.update("UPDATE care_record SET start_at = DATE_SUB(start_at, INTERVAL 61 SECOND) WHERE record_id = ?",
+                rightId);
+        JsonNode completed = transition(baby, rightId, token(owner), "complete", 200).path("data");
+        assertThat(completed.path("detail").path("breastSide").asText()).isEqualTo("RIGHT");
+        assertThat(completed.path("detail").path("durationMinutes").asInt()).isGreaterThanOrEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT duration_minutes FROM feeding_detail WHERE record_id = ?",
+                Integer.class, rightId)).isEqualTo(completed.path("detail").path("durationMinutes").asInt());
+        assertThat(jdbc.queryForMap("SELECT created_by_member_id, completed_by_member_id "
+                + "FROM care_record WHERE record_id = ?", rightId))
+                .containsEntry("created_by_member_id", caregiver).containsEntry("completed_by_member_id", owner);
+    }
+
+    @Test
+    void longRunningActiveRecordIsNotAutomaticallyClosed() throws Exception {
+        long owner = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        long id = start(baby, token(owner), "{\"recordType\":\"SLEEP\"}", 201)
+                .path("data").path("recordId").asLong();
+        jdbc.update("UPDATE care_record SET recorded_at = DATE_SUB(recorded_at, INTERVAL 15 HOUR), "
+                + "start_at = DATE_SUB(start_at, INTERVAL 15 HOUR) WHERE record_id = ?", id);
+        JsonNode active = active(baby, token(owner), 200).path("data");
+        assertThat(active.path("recordId").asLong()).isEqualTo(id);
+        assertThat(active.path("status").asText()).isEqualTo("IN_PROGRESS");
+        assertThat(active.path("endAt").isNull()).isTrue();
+    }
+
+    @Test
+    void activeRequestsRejectInvalidInputAndUnauthorizedAccess() throws Exception {
+        long owner = insertMember(false);
+        long outsider = insertMember(false);
+        long left = insertMember(false);
+        long removed = insertMember(false);
+        long baby = insertBaby(owner, false);
+        long otherBaby = insertBaby(owner, false);
+        long deleted = insertBaby(owner, true);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(otherBaby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        insertMembership(deleted, owner, "OWNER", "ACTIVE");
+        for (String body : List.of("{\"recordType\":\"FEEDING\",\"detail\":{\"feedingType\":\"FORMULA\",\"breastSide\":\"LEFT\"}}",
+                direct("BOTH"), "{\"recordType\":\"DIAPER\"}",
+                "{\"recordType\":\"SLEEP\",\"startAt\":\"2020-01-01T00:00:00Z\"}",
+                "{\"recordType\":\"SLEEP\",\"detail\":null}",
+                "{\"recordType\":\"FEEDING\",\"detail\":{\"feedingType\":\"DIRECT_BREASTFEEDING\"}}")) {
+            assertFailure(start(baby, token(owner), body, 400));
+        }
+        JsonNode started = start(baby, token(owner), "{\"recordType\":\"SLEEP\"}", 201).path("data");
+        long id = started.path("recordId").asLong();
+        for (long member : List.of(outsider, left, removed)) {
+            assertFailure(active(baby, token(member), 404));
+            assertFailure(start(baby, token(member), direct("LEFT"), 404));
+            assertFailure(transition(baby, id, token(member), "complete", 404));
+            assertFailure(transition(baby, id, token(member), "cancel", 404));
+        }
+        assertFailure(active(deleted, token(owner), 404));
+        assertFailure(active(Long.MAX_VALUE, token(owner), 404));
+        assertFailure(transition(baby, Long.MAX_VALUE, token(owner), "complete", 404));
+        assertFailure(transition(baby, Long.MAX_VALUE, token(owner), "cancel", 404));
+        assertFailure(transition(otherBaby, id, token(owner), "complete", 404));
+        assertFailure(transition(otherBaby, id, token(owner), "cancel", 404));
+        assertFailure(active(0, token(owner), 400));
+        assertFailure(start(0, token(owner), "{\"recordType\":\"SLEEP\"}", 400));
+        assertFailure(transition(baby, 0, token(owner), "complete", 400));
+        assertFailure(transition(baby, 0, token(owner), "cancel", 400));
+        assertFailure(transition(baby, id, null, "complete", 401));
+        assertFailure(active(baby, null, 401));
+        assertFailure(start(baby, null, direct("LEFT"), 401));
+        assertFailure(active(baby, token(Long.MAX_VALUE), 401));
+        String withdrawn = token(insertMember(true));
+        assertFailure(active(baby, withdrawn, 403));
+        assertFailure(start(baby, withdrawn, "{\"recordType\":\"SLEEP\"}", 403));
+        assertFailure(transition(baby, id, withdrawn, "complete", 403));
+        assertFailure(transition(baby, id, withdrawn, "cancel", 403));
+    }
+
+    @Test
+    void concurrentStartsAndCompleteCancelHaveExactlyOneWinner() throws Exception {
+        long owner = insertMember(false);
+        long caregiver = insertMember(false);
+        long baby = insertBaby(owner, false);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, caregiver, "CAREGIVER", "ACTIVE");
+        List<Integer> starts = concurrently(
+                () -> startAnyStatus(baby, token(owner), "{\"recordType\":\"SLEEP\"}"),
+                () -> startAnyStatus(baby, token(caregiver), direct("LEFT")));
+        assertThat(starts).containsExactlyInAnyOrder(201, 409);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM care_record WHERE baby_id = ? "
+                + "AND status = 'IN_PROGRESS' AND is_deleted = FALSE", Integer.class, baby)).isEqualTo(1);
+        long id = active(baby, token(owner), 200).path("data").path("recordId").asLong();
+        List<Integer> endings = concurrently(
+                () -> transitionAnyStatus(baby, id, token(owner), "complete"),
+                () -> transitionAnyStatus(baby, id, token(caregiver), "cancel"));
+        assertThat(endings).containsExactlyInAnyOrder(200, 409);
+        assertThat(jdbc.queryForObject("SELECT status FROM care_record WHERE record_id = ?", String.class, id))
+                .isIn("COMPLETED", "CANCELED");
+        assertThat(start(baby, token(owner), "{\"recordType\":\"SLEEP\"}", 201).path("data")
+                .path("status").asText()).isEqualTo("IN_PROGRESS");
+    }
 
     @Test
     void migrationAndAllSixTypesPersistWithTypedDetailsAndAudit() throws Exception {
@@ -559,6 +760,65 @@ class CareRecordMariaDbIntegrationTest {
                 .containsEntry("last_updated_by_member_id", memberId).containsEntry("deleted_by_member_id", null)
                 .containsEntry("version", 0L).containsEntry("is_deleted", false).containsEntry("deleted_at", null);
         return data;
+    }
+
+    private String direct(String side) {
+        return "{\"recordType\":\"FEEDING\",\"detail\":{\"feedingType\":\"DIRECT_BREASTFEEDING\","
+                + "\"breastSide\":\"" + side + "\"}}";
+    }
+
+    private JsonNode start(long babyId, String jwt, String body, int expectedStatus) throws Exception {
+        var request = post("/api/v1/babies/{babyId}/records/start", babyId)
+                .contentType(MediaType.APPLICATION_JSON).content(body);
+        if (jwt != null) request.header("Authorization", "Bearer " + jwt);
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private int startAnyStatus(long babyId, String jwt, String body) throws Exception {
+        return mvc.perform(post("/api/v1/babies/{babyId}/records/start", babyId)
+                        .header("Authorization", "Bearer " + jwt)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andReturn().getResponse().getStatus();
+    }
+
+    private JsonNode active(long babyId, String jwt, int expectedStatus) throws Exception {
+        var request = get("/api/v1/babies/{babyId}/records/active", babyId);
+        if (jwt != null) request.header("Authorization", "Bearer " + jwt);
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private JsonNode transition(long babyId, long recordId, String jwt, String action, int expectedStatus)
+            throws Exception {
+        var request = patch("/api/v1/babies/{babyId}/records/{recordId}/{action}", babyId, recordId, action);
+        if (jwt != null) request.header("Authorization", "Bearer " + jwt);
+        return mapper.readTree(mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private int transitionAnyStatus(long babyId, long recordId, String jwt, String action) throws Exception {
+        return mvc.perform(patch("/api/v1/babies/{babyId}/records/{recordId}/{action}", babyId, recordId, action)
+                        .header("Authorization", "Bearer " + jwt))
+                .andReturn().getResponse().getStatus();
+    }
+
+    private List<Integer> concurrently(Callable<Integer> first, Callable<Integer> second) throws Exception {
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            List<Future<Integer>> results = new ArrayList<>();
+            for (Callable<Integer> task : List.of(first, second)) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    go.await();
+                    return task.call();
+                }));
+            }
+            ready.await();
+            go.countDown();
+            return List.of(results.get(0).get(), results.get(1).get());
+        }
     }
 
     private JsonNode send(long babyId, String jwt, String body, int expectedStatus) throws Exception {

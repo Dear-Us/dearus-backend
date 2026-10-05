@@ -14,4 +14,6 @@ public interface CareRecordQueryUseCase {
 
     CareRecordView detail(Long memberId, Long babyId, Long recordId);
 
+    CareRecordView active(Long memberId, Long babyId);
+
 }

@@ -53,7 +53,7 @@ public record CareRecordResponse(Long recordId, Long babyId, CareRecordType reco
     }
 
     public record FormulaResponse(FeedingType feedingType, int amountMl) { }
-    public record BreastfeedingResponse(FeedingType feedingType, BreastSide breastSide, int durationMinutes) { }
+    public record BreastfeedingResponse(FeedingType feedingType, BreastSide breastSide, Integer durationMinutes) { }
     public record DiaperResponse(DiaperType diaperType, String condition, String color) { }
     public record TemperatureResponse(BigDecimal temperatureCelsius, TemperatureMeasuredPart measuredPart) { }
     public record MedicineResponse(String medicineName, BigDecimal doseValue, MedicineDoseUnit doseUnit) { }

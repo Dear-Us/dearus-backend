@@ -64,6 +64,12 @@ public class CareRecordQueryService implements CareRecordQueryUseCase {
                 .orElseThrow(() -> new CareException(CareErrorCode.RECORD_NOT_FOUND));
     }
 
+    @Override
+    public CareRecordView active(Long memberId, Long babyId) {
+        ZoneId zone = accessibleZone(memberId, babyId);
+        return records.findActiveRecord(babyId).map(record -> record.inZone(zone)).orElse(null);
+    }
+
     private ZoneId timezone(Long memberId) {
         return ZoneId.of(members.requireActiveMember(memberId).timezone());
     }

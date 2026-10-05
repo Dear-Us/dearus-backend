@@ -1,6 +1,7 @@
 package com.dearusback.care.presentation.rest;
 
 import com.dearusback.care.application.port.in.CreateCareRecordUseCase;
+import com.dearusback.care.application.port.in.ActiveCareRecordUseCase;
 import com.dearusback.care.application.port.in.CareRecordQueryUseCase;
 import com.dearusback.care.application.model.CalendarDayCount;
 import com.dearusback.care.domain.model.CareRecord.CareRecordType;
@@ -8,6 +9,7 @@ import com.dearusback.care.domain.exception.CareErrorCode;
 import com.dearusback.care.domain.exception.CareException;
 import com.dearusback.care.presentation.dto.CareRecordResponse;
 import com.dearusback.care.presentation.dto.CreateCareRecordRequest;
+import com.dearusback.care.presentation.dto.StartCareRecordRequest;
 import com.dearusback.support.presentation.response.ApiResponse;
 import java.time.LocalDate;
 import java.time.DateTimeException;
@@ -21,6 +23,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -33,10 +36,13 @@ public class CareRecordController {
 
     private final CreateCareRecordUseCase records;
     private final CareRecordQueryUseCase queries;
+    private final ActiveCareRecordUseCase activeRecords;
 
-    public CareRecordController(CreateCareRecordUseCase records, CareRecordQueryUseCase queries) {
+    public CareRecordController(CreateCareRecordUseCase records, CareRecordQueryUseCase queries,
+                                ActiveCareRecordUseCase activeRecords) {
         this.records = records;
         this.queries = queries;
+        this.activeRecords = activeRecords;
     }
 
     @GetMapping
@@ -88,6 +94,44 @@ public class CareRecordController {
         requirePositive(recordId);
         return ResponseEntity.ok(ApiResponse.success(CareRecordResponse.from(
                 queries.detail(memberId, babyId, recordId))));
+    }
+
+    @GetMapping("/active")
+    public ResponseEntity<ApiResponse<CareRecordResponse>> active(
+            @AuthenticationPrincipal Long memberId, @PathVariable Long babyId) {
+        requirePositive(babyId);
+        var record = queries.active(memberId, babyId);
+        return ResponseEntity.ok(ApiResponse.success(record == null ? null : CareRecordResponse.from(record)));
+    }
+
+    @PostMapping(value = "/start", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ApiResponse<CareRecordResponse>> start(@AuthenticationPrincipal Long memberId,
+                                                                  @PathVariable Long babyId,
+                                                                  @RequestBody JsonNode request) {
+        if (babyId == null || babyId <= 0) {
+            throw new CareException(CareErrorCode.INVALID_RECORD);
+        }
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(CareRecordResponse.from(
+                activeRecords.start(StartCareRecordRequest.toCommand(babyId, memberId, request)))));
+    }
+
+    @PatchMapping("/{recordId}/complete")
+    public ResponseEntity<ApiResponse<CareRecordResponse>> complete(@AuthenticationPrincipal Long memberId,
+                                                                     @PathVariable Long babyId,
+                                                                     @PathVariable Long recordId) {
+        requirePositive(babyId);
+        requirePositive(recordId);
+        return ResponseEntity.ok(ApiResponse.success(CareRecordResponse.from(
+                activeRecords.complete(memberId, babyId, recordId))));
+    }
+
+    @PatchMapping("/{recordId}/cancel")
+    public ResponseEntity<ApiResponse<Void>> cancel(@AuthenticationPrincipal Long memberId,
+                                                     @PathVariable Long babyId, @PathVariable Long recordId) {
+        requirePositive(babyId);
+        requirePositive(recordId);
+        activeRecords.cancel(memberId, babyId, recordId);
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)

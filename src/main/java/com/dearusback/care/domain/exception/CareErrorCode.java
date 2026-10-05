@@ -6,7 +6,9 @@ import com.dearusback.support.domain.exception.ErrorType;
 public enum CareErrorCode implements ErrorCode {
     INVALID_RECORD("INVALID_RECORD", "육아 기록 정보가 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     INVALID_RECORD_QUERY("INVALID_RECORD_QUERY", "육아 기록 조회 조건이 올바르지 않습니다.", ErrorType.BAD_REQUEST),
-    RECORD_NOT_FOUND("RECORD_NOT_FOUND", "육아 기록을 찾을 수 없습니다.", ErrorType.NOT_FOUND);
+    RECORD_NOT_FOUND("RECORD_NOT_FOUND", "육아 기록을 찾을 수 없습니다.", ErrorType.NOT_FOUND),
+    ACTIVE_RECORD_EXISTS("ACTIVE_RECORD_EXISTS", "이미 진행 중인 기록이 있습니다.", ErrorType.CONFLICT),
+    RECORD_ALREADY_FINISHED("RECORD_ALREADY_FINISHED", "이미 종료된 기록입니다.", ErrorType.CONFLICT);
 
     private final String code;
     private final String message;

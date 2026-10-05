@@ -79,6 +79,29 @@ public class CareRecordQueryAdapter implements CareRecordQueryPort {
         return attachDetails(rows).stream().findFirst();
     }
 
+    @Override
+    public Optional<CareRecordView> findActiveRecord(Long babyId) {
+        List<CareRecordView> rows = jdbc.query("SELECT " + FIELDS + " FROM care_record "
+                        + "WHERE baby_id = ? AND status = 'IN_PROGRESS' AND is_deleted = FALSE",
+                (result, index) -> row(result), babyId);
+        if (rows.size() > 1) {
+            throw new IllegalStateException("More than one active care record exists for baby");
+        }
+        List<CareRecordView> loaded = attachDetails(rows);
+        if (!loaded.isEmpty()) {
+            CareRecordView record = loaded.getFirst();
+            boolean validSleep = record.recordType() == CareRecordType.SLEEP && record.detail() == null;
+            boolean validFeeding = record.recordType() == CareRecordType.FEEDING
+                    && record.detail() instanceof FeedingDetail feeding
+                    && feeding.feedingType() == FeedingType.DIRECT_BREASTFEEDING
+                    && feeding.breastSide() != BreastSide.BOTH && feeding.durationMinutes() == null;
+            if (!validSleep && !validFeeding) {
+                throw new IllegalStateException("Invalid active care record");
+            }
+        }
+        return loaded.stream().findFirst();
+    }
+
     private List<CareRecordView> attachDetails(List<CareRecordView> rows) {
         if (rows.isEmpty()) {
             return rows;
@@ -94,7 +117,7 @@ public class CareRecordQueryAdapter implements CareRecordQueryPort {
         return rows.stream().map(row -> {
             Detail detail = details.get(row.recordId());
             if (row.recordType() != CareRecordType.SLEEP && detail == null) {
-                throw new IllegalStateException("Completed care record is missing its detail");
+                throw new IllegalStateException("Care record is missing its detail");
             }
             return row.withDetail(detail);
         }).toList();

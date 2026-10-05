@@ -3,6 +3,8 @@ package com.dearusback.care.domain.model;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.Duration;
 import java.util.Objects;
 
 public record CareRecord(Long id, Long babyId, CareRecordType recordType, CareRecordInputType inputType,
@@ -34,12 +36,78 @@ public record CareRecord(Long id, Long babyId, CareRecordType recordType, CareRe
             }
             recordedAt = startAt;
         } else if (recordedAt == null || recordedAt.toInstant().isAfter(now) || startAt != null || endAt != null
-                || !matches(type, detail)) {
+                || !matches(type, detail) || (detail instanceof FeedingDetail feeding
+                && feeding.feedingType() == FeedingType.DIRECT_BREASTFEEDING
+                && feeding.durationMinutes() == null)) {
             throw new IllegalArgumentException("Invalid completed record");
         }
         return new CareRecord(null, babyId, type, inputType, CareRecordStatus.COMPLETED, recordedAt,
                 startAt, endAt, memo, detail, memberId, memberId, memberId, null,
                 0, false, now, now, null);
+    }
+
+    public static CareRecord startSleep(Long babyId, Long memberId, CareRecordInputType inputType,
+                                        OffsetDateTime now, String memo) {
+        return new CareRecord(null, babyId, CareRecordType.SLEEP, inputType, CareRecordStatus.IN_PROGRESS,
+                now, now, null, memo, null, memberId, null, memberId, null, 0, false,
+                now.toInstant(), now.toInstant(), null);
+    }
+
+    public static CareRecord startBreastfeeding(Long babyId, Long memberId, CareRecordInputType inputType,
+                                                OffsetDateTime now, String memo, BreastSide side) {
+        if (side == null || side == BreastSide.BOTH) {
+            throw new IllegalArgumentException("Invalid active breast side");
+        }
+        return new CareRecord(null, babyId, CareRecordType.FEEDING, inputType, CareRecordStatus.IN_PROGRESS,
+                now, now, null, memo, new FeedingDetail(FeedingType.DIRECT_BREASTFEEDING, null, side, null),
+                memberId, null, memberId, null, 0, false, now.toInstant(), now.toInstant(), null);
+    }
+
+    public CareRecord complete(OffsetDateTime now, Long memberId) {
+        requireInProgress();
+        if (now.toInstant().isBefore(startAt.toInstant())) {
+            throw new IllegalArgumentException("Completion precedes start");
+        }
+        Detail completedDetail = detail;
+        if (detail instanceof FeedingDetail feeding) {
+            Duration elapsed = Duration.between(startAt.toInstant(), now.toInstant());
+            long seconds = elapsed.getSeconds() + (elapsed.getNano() > 0 ? 1 : 0);
+            long minutes = Math.max(1, (seconds + 59) / 60);
+            if (minutes > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Duration exceeds supported range");
+            }
+            completedDetail = new FeedingDetail(FeedingType.DIRECT_BREASTFEEDING, null,
+                    feeding.breastSide(), (int) minutes);
+        }
+        return new CareRecord(id, babyId, recordType, inputType, CareRecordStatus.COMPLETED,
+                recordedAt, startAt, now, memo, completedDetail, createdByMemberId, memberId, memberId,
+                deletedByMemberId, version, deleted, createdAt, now.toInstant(), deletedAt);
+    }
+
+    public CareRecord cancel(Instant now, Long memberId) {
+        requireInProgress();
+        return new CareRecord(id, babyId, recordType, inputType, CareRecordStatus.CANCELED,
+                recordedAt, startAt, null, memo, detail, createdByMemberId, null, memberId,
+                deletedByMemberId, version, deleted, createdAt, now, deletedAt);
+    }
+
+    private void requireInProgress() {
+        boolean validSleep = recordType == CareRecordType.SLEEP && detail == null;
+        boolean validFeeding = recordType == CareRecordType.FEEDING && detail instanceof FeedingDetail feeding
+                && feeding.feedingType() == FeedingType.DIRECT_BREASTFEEDING
+                && feeding.breastSide() != BreastSide.BOTH && feeding.durationMinutes() == null;
+        if (deleted || status != CareRecordStatus.IN_PROGRESS || (!validSleep && !validFeeding)) {
+            throw new IllegalStateException("Record is not in progress");
+        }
+    }
+
+    public CareRecord inZone(ZoneId zone) {
+        return new CareRecord(id, babyId, recordType, inputType, status,
+                recordedAt.atZoneSameInstant(zone).toOffsetDateTime(),
+                startAt == null ? null : startAt.atZoneSameInstant(zone).toOffsetDateTime(),
+                endAt == null ? null : endAt.atZoneSameInstant(zone).toOffsetDateTime(), memo, detail,
+                createdByMemberId, completedByMemberId, lastUpdatedByMemberId, deletedByMemberId,
+                version, deleted, createdAt, updatedAt, deletedAt);
     }
 
     private static boolean matches(CareRecordType type, Detail detail) {
@@ -79,7 +147,7 @@ public record CareRecord(Long id, Long babyId, CareRecordType recordType, CareRe
                 if (amountMl == null || amountMl <= 0 || breastSide != null || durationMinutes != null) {
                     throw new IllegalArgumentException("Invalid formula detail");
                 }
-            } else if (amountMl != null || breastSide == null || durationMinutes == null || durationMinutes <= 0) {
+            } else if (amountMl != null || breastSide == null || (durationMinutes != null && durationMinutes <= 0)) {
                 throw new IllegalArgumentException("Invalid breastfeeding detail");
             }
         }
