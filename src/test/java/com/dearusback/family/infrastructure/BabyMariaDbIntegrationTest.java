@@ -2075,6 +2075,51 @@ class BabyMariaDbIntegrationTest {
     }
 
     @Test
+    void caregiverLifecycleFromBabyCreationThroughOwnershipTransfer() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long caregiver = insertMember("Asia/Seoul", false);
+        String ownerToken = token(owner);
+        String caregiverToken = token(caregiver);
+        long baby = send(ownerToken, request("도윤", "2020-01-01", "MALE"), null)
+                .path("data").path("babyId").asLong();
+        assertThat(selectedBaby(owner)).isEqualTo(baby);
+
+        JsonNode first = createInvitation(Long.toString(baby), ownerToken, 201);
+        assertThat(acceptInvitation(rawInvitationToken(first), caregiverToken, 200)
+                .path("data").path("status").asText()).isEqualTo("ACCEPTED");
+        assertThat(selectedBaby(caregiver)).isEqualTo(baby);
+        assertBabyResponse(listBabies(caregiverToken, 200).path("data").get(0),
+                baby, "도윤", "2020-01-01", "MALE", null, "CAREGIVER");
+        assertThat(detailBaby(Long.toString(baby), caregiverToken, 200)
+                .path("data").path("myRole").asText()).isEqualTo("CAREGIVER");
+
+        assertDeleted(removeCaregiver(Long.toString(baby), Long.toString(caregiver), ownerToken, 200));
+        assertThat(membershipRow(baby, caregiver).get("status")).isEqualTo("REMOVED");
+        assertThat(selectedBaby(caregiver)).isNull();
+        assertFailure(detailBaby(Long.toString(baby), caregiverToken, 404));
+
+        JsonNode second = createInvitation(Long.toString(baby), ownerToken, 201);
+        assertThat(acceptInvitation(rawInvitationToken(second), caregiverToken, 200)
+                .path("data").path("status").asText()).isEqualTo("ACCEPTED");
+        assertDeleted(leaveCaregiver(Long.toString(baby), caregiverToken, 200));
+        assertThat(membershipRow(baby, caregiver).get("status")).isEqualTo("LEFT");
+        assertThat(selectedBaby(caregiver)).isNull();
+
+        JsonNode third = createInvitation(Long.toString(baby), ownerToken, 201);
+        assertThat(acceptInvitation(rawInvitationToken(third), caregiverToken, 200)
+                .path("data").path("status").asText()).isEqualTo("ACCEPTED");
+        assertThat(membershipRow(baby, caregiver).get("status")).isEqualTo("ACTIVE");
+        assertThat(selectedBaby(caregiver)).isEqualTo(baby);
+
+        assertThat(transferOwner(Long.toString(baby), ownerToken,
+                "{\"memberId\":" + caregiver + "}", 200).path("data").path("ownerMemberId").asLong())
+                .isEqualTo(caregiver);
+        assertThat(membershipRow(baby, caregiver).get("role")).isEqualTo("OWNER");
+        assertThat(membershipRow(baby, owner).get("role")).isEqualTo("CAREGIVER");
+        assertThat(activeOwnerCount(baby)).isEqualTo(1);
+    }
+
+    @Test
     void ownershipTransferRejectsInvalidRequesterTargetAndBody() throws Exception {
         long owner = insertMember("Asia/Seoul", false);
         long caregiver = insertMember("Asia/Seoul", false);
