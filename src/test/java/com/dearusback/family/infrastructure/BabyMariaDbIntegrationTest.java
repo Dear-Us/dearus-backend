@@ -926,6 +926,152 @@ class BabyMariaDbIntegrationTest {
         assertFailure(detailBaby(Long.toString(baby), jwt, 404));
     }
 
+    @Test
+    void ownerAndCaregiverSeeOnlyActiveMembersInStableOrderWithoutStateChanges() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long later = insertMember("Asia/Seoul", false);
+        long tiedFirst = insertMember("Asia/Seoul", false);
+        long tiedSecond = insertMember("Asia/Seoul", false);
+        long left = insertMember("Asia/Seoul", false);
+        long removed = insertMember("Asia/Seoul", false);
+        long other = insertMember("Asia/Seoul", false);
+        String ownerImage = "https://images.example/members/owner.png";
+        jdbc.update("UPDATE member SET member_name = ?, profile_image_url = ? WHERE member_id = ?",
+                "김소은", ownerImage, owner);
+        jdbc.update("UPDATE member SET member_name = ? WHERE member_id = ?", "늦은 보호자", later);
+        jdbc.update("UPDATE member SET member_name = ? WHERE member_id = ?", "첫 동시 보호자", tiedFirst);
+        jdbc.update("UPDATE member SET member_name = ? WHERE member_id = ?", "둘째 동시 보호자", tiedSecond);
+        Instant now = Instant.now();
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, now);
+        long otherBaby = insertBaby(other, "서윤", "2021-01-01", "FEMALE", null, false, now);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, later, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, tiedFirst, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, tiedSecond, "CAREGIVER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        insertMembership(otherBaby, other, "OWNER", "ACTIVE");
+        Instant tiedAt = now.minusSeconds(3600);
+        jdbc.update("UPDATE baby_member SET joined_at = ? WHERE baby_id = ? AND member_id IN (?, ?)",
+                Timestamp.from(tiedAt), baby, tiedFirst, tiedSecond);
+        jdbc.update("UPDATE baby_member SET joined_at = ? WHERE baby_id = ? AND member_id = ?",
+                Timestamp.from(now), baby, later);
+        jdbc.update("UPDATE member SET last_selected_baby_id = ? WHERE member_id = ?", baby, owner);
+        var babyBefore = babyRow(baby);
+        var ownerBefore = memberStateRow(owner);
+        var caregiverBefore = memberStateRow(tiedFirst);
+        var membershipBefore = membershipRow(baby, tiedFirst);
+
+        JsonNode fromOwner = listBabyMembers(Long.toString(baby), token(owner), 200);
+        JsonNode fromCaregiver = listBabyMembers(Long.toString(baby), token(tiedFirst), 200);
+
+        assertThat(fromOwner).isEqualTo(fromCaregiver);
+        assertThat(fromOwner.size()).isEqualTo(3);
+        assertThat(fromOwner.path("success").asBoolean()).isTrue();
+        assertThat(fromOwner.path("message").isNull()).isTrue();
+        assertThat(fromOwner.has("errorCode")).isFalse();
+        JsonNode data = fromOwner.path("data");
+        assertThat(data.size()).isEqualTo(4);
+        assertMemberSummary(data.get(0), owner, "김소은", ownerImage, "OWNER");
+        assertMemberSummary(data.get(1), tiedFirst, "첫 동시 보호자", null, "CAREGIVER");
+        assertMemberSummary(data.get(2), tiedSecond, "둘째 동시 보호자", null, "CAREGIVER");
+        assertMemberSummary(data.get(3), later, "늦은 보호자", null, "CAREGIVER");
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(memberStateRow(owner)).isEqualTo(ownerBefore);
+        assertThat(memberStateRow(tiedFirst)).isEqualTo(caregiverBefore);
+        assertThat(membershipRow(baby, tiedFirst)).isEqualTo(membershipBefore);
+    }
+
+    @Test
+    void babyMemberListHidesAllInaccessibleBabiesWithSame404() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long outsider = insertMember("Asia/Seoul", false);
+        long left = insertMember("Asia/Seoul", false);
+        long removed = insertMember("Asia/Seoul", false);
+        Instant now = Instant.now();
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, now);
+        long deleted = insertBaby(owner, "삭제", "2020-01-01", "MALE", null, true, now);
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, left, "CAREGIVER", "LEFT");
+        insertMembership(baby, removed, "CAREGIVER", "REMOVED");
+        insertMembership(deleted, owner, "OWNER", "ACTIVE");
+        var before = babyRow(baby);
+        for (long requester : new long[]{outsider, left, removed}) {
+            JsonNode response = listBabyMembers(Long.toString(baby), token(requester), 404);
+            assertFailure(response);
+            assertThat(response.path("message").asText()).isEqualTo("아기 정보를 찾을 수 없습니다.");
+        }
+        for (long unavailable : new long[]{Long.MAX_VALUE, deleted}) {
+            JsonNode response = listBabyMembers(Long.toString(unavailable), token(owner), 404);
+            assertFailure(response);
+            assertThat(response.path("message").asText()).isEqualTo("아기 정보를 찾을 수 없습니다.");
+        }
+        assertThat(babyRow(baby)).isEqualTo(before);
+    }
+
+    @Test
+    void babyMemberListValidatesRequesterAndPath() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        for (String invalid : List.of("0", "-1", "not-a-number")) {
+            assertFailure(listBabyMembers(invalid, token(owner), 400));
+        }
+        assertFailure(listBabyMembers(Long.toString(baby), null, 401));
+        assertFailure(listBabyMembers(Long.toString(baby), "invalid.jwt", 401));
+        assertFailure(listBabyMembers(Long.toString(baby), token(Long.MAX_VALUE), 401));
+        assertFailure(listBabyMembers(Long.toString(baby), token(insertMember("Asia/Seoul", true)), 403));
+    }
+
+    @Test
+    void babyMemberListFailsWhenActiveMembershipPointsToWithdrawnMember() throws Exception {
+        long owner = insertMember("Asia/Seoul", false);
+        long withdrawn = insertMember("Asia/Seoul", true);
+        long baby = insertBaby(owner, "도윤", "2020-01-01", "MALE", null, false, Instant.now());
+        insertMembership(baby, owner, "OWNER", "ACTIVE");
+        insertMembership(baby, withdrawn, "CAREGIVER", "ACTIVE");
+        var babyBefore = babyRow(baby);
+        var withdrawnBefore = memberStateRow(withdrawn);
+        var membershipBefore = membershipRow(baby, withdrawn);
+
+        assertFailure(listBabyMembers(Long.toString(baby), token(owner), 500));
+
+        assertThat(babyRow(baby)).isEqualTo(babyBefore);
+        assertThat(memberStateRow(withdrawn)).isEqualTo(withdrawnBefore);
+        assertThat(membershipRow(baby, withdrawn)).isEqualTo(membershipBefore);
+    }
+
+    private JsonNode listBabyMembers(String babyId, String jwt, int expectedStatus) throws Exception {
+        var request = get("/api/v1/babies/{babyId}/members", babyId);
+        if (jwt != null) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+        String response = mvc.perform(request).andExpect(status().is(expectedStatus))
+                .andReturn().getResponse().getContentAsString();
+        return mapper.readTree(response);
+    }
+
+    private void assertMemberSummary(JsonNode actual, long memberId, String name, String imageUrl, String role) {
+        assertThat(actual.size()).isEqualTo(4);
+        assertThat(actual.path("memberId").asLong()).isEqualTo(memberId);
+        assertThat(actual.path("memberName").asText()).isEqualTo(name);
+        if (imageUrl == null) {
+            assertThat(actual.path("profileImageUrl").isNull()).isTrue();
+        } else {
+            assertThat(actual.path("profileImageUrl").asText()).isEqualTo(imageUrl);
+        }
+        assertThat(actual.path("role").asText()).isEqualTo(role);
+        for (String hidden : List.of("email", "socialAccounts", "providerUserId", "lastSelectedBabyId",
+                "timezone", "isDeleted")) {
+            assertThat(actual.has(hidden)).isFalse();
+        }
+    }
+
+    private java.util.Map<String, Object> memberStateRow(long memberId) {
+        return jdbc.queryForMap("SELECT member_name, profile_image_url, last_selected_baby_id, is_deleted "
+                + "FROM member WHERE member_id = ?", memberId);
+    }
+
     private int deleteStatus(long babyId, String jwt) throws Exception {
         return mvc.perform(delete("/api/v1/babies/{babyId}", babyId)
                 .header("Authorization", "Bearer " + jwt)).andReturn().getResponse().getStatus();

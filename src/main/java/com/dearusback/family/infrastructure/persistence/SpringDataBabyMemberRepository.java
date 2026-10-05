@@ -1,6 +1,7 @@
 package com.dearusback.family.infrastructure.persistence;
 
 import com.dearusback.family.application.model.MyBabySummary;
+import com.dearusback.family.application.model.BabyMembershipView;
 import com.dearusback.family.domain.model.BabyMemberStatus;
 import jakarta.persistence.LockModeType;
 import java.util.List;
@@ -56,4 +57,11 @@ interface SpringDataBabyMemberRepository extends JpaRepository<BabyMemberJpaEnti
     Optional<MyBabySummary> findAccessibleBaby(
             @Param("memberId") Long memberId, @Param("babyId") Long babyId,
             @Param("activeStatus") BabyMemberStatus activeStatus);
+
+    @Query("select new com.dearusback.family.application.model.BabyMembershipView("
+            + "membership.memberId, membership.role, membership.joinedAt) "
+            + "from BabyMemberJpaEntity membership join membership.baby baby "
+            + "where baby.id = :babyId and baby.deleted = false and membership.status = :activeStatus")
+    List<BabyMembershipView> findActiveMembers(
+            @Param("babyId") Long babyId, @Param("activeStatus") BabyMemberStatus activeStatus);
 }

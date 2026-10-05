@@ -6,11 +6,13 @@ import com.dearusback.family.application.model.UpdateBabyCommand;
 import com.dearusback.family.application.port.in.CreateBabyUseCase;
 import com.dearusback.family.application.port.in.DeleteBabyUseCase;
 import com.dearusback.family.application.port.in.GetBabyUseCase;
+import com.dearusback.family.application.port.in.GetBabyMembersUseCase;
 import com.dearusback.family.application.port.in.GetMyBabiesUseCase;
 import com.dearusback.family.application.port.in.UpdateBabyUseCase;
 import com.dearusback.family.domain.exception.FamilyErrorCode;
 import com.dearusback.family.domain.exception.FamilyException;
 import com.dearusback.family.presentation.dto.BabyResponse;
+import com.dearusback.family.presentation.dto.BabyMemberResponse;
 import com.dearusback.family.presentation.dto.CreateBabyRequest;
 import com.dearusback.family.presentation.dto.UpdateBabyRequest;
 import com.dearusback.support.presentation.response.ApiResponse;
@@ -37,16 +39,29 @@ public class BabyController {
     private final CreateBabyUseCase useCase;
     private final GetMyBabiesUseCase getMyBabies;
     private final GetBabyUseCase getBaby;
+    private final GetBabyMembersUseCase getBabyMembers;
     private final UpdateBabyUseCase updateBaby;
     private final DeleteBabyUseCase deleteBaby;
 
     public BabyController(CreateBabyUseCase useCase, GetMyBabiesUseCase getMyBabies, GetBabyUseCase getBaby,
-                          UpdateBabyUseCase updateBaby, DeleteBabyUseCase deleteBaby) {
+                          GetBabyMembersUseCase getBabyMembers, UpdateBabyUseCase updateBaby,
+                          DeleteBabyUseCase deleteBaby) {
         this.useCase = useCase;
         this.getMyBabies = getMyBabies;
         this.getBaby = getBaby;
+        this.getBabyMembers = getBabyMembers;
         this.updateBaby = updateBaby;
         this.deleteBaby = deleteBaby;
+    }
+
+    @GetMapping("/{babyId}/members")
+    public ResponseEntity<ApiResponse<List<BabyMemberResponse>>> members(
+            @AuthenticationPrincipal Long memberId, @PathVariable Long babyId) {
+        if (babyId == null || babyId <= 0) {
+            throw new FamilyException(FamilyErrorCode.INVALID_BABY_ID);
+        }
+        return ResponseEntity.ok(ApiResponse.success(getBabyMembers.getMembers(memberId, babyId)
+                .stream().map(BabyMemberResponse::from).toList()));
     }
 
     @DeleteMapping("/{babyId}")

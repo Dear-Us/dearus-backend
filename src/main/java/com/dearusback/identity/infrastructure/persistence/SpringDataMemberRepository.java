@@ -1,8 +1,11 @@
 package com.dearusback.identity.infrastructure.persistence;
 
 import com.dearusback.identity.domain.type.SocialProvider;
+import com.dearusback.identity.application.model.ActiveMemberSummary;
 import jakarta.persistence.LockModeType;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -10,6 +13,11 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 interface SpringDataMemberRepository extends JpaRepository<MemberJpaEntity, Long> {
+
+    @Query("select new com.dearusback.identity.application.model.ActiveMemberSummary("
+            + "member.id, member.name, member.profileImageUrl) "
+            + "from MemberJpaEntity member where member.id in :memberIds and member.deleted = false")
+    List<ActiveMemberSummary> findActiveSummaries(@Param("memberIds") Set<Long> memberIds);
 
     @Modifying
     @Query("update MemberJpaEntity member set member.lastSelectedBabyId = :babyId "
