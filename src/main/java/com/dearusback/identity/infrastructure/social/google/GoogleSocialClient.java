@@ -30,13 +30,17 @@ public class GoogleSocialClient implements SocialProviderClient {
     );
 
     private final JwtDecoder jwtDecoder;
+    private final boolean configured;
 
     @Autowired
     public GoogleSocialClient(AuthProperties properties) {
+        this.configured = properties.google().clientId() != null
+                && !properties.google().clientId().isBlank();
         this.jwtDecoder = buildDecoder(properties);
     }
 
     GoogleSocialClient(JwtDecoder jwtDecoder) {
+        this.configured = true;
         this.jwtDecoder = jwtDecoder;
     }
 
@@ -68,6 +72,9 @@ public class GoogleSocialClient implements SocialProviderClient {
 
     @Override
     public VerifiedSocialIdentity verify(String providerToken) {
+        if (!configured) {
+            throw new IdentityException(IdentityErrorCode.SOCIAL_PROVIDER_UNAVAILABLE);
+        }
         try {
             Jwt jwt = jwtDecoder.decode(providerToken);
             String subject = jwt.getSubject();

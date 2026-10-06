@@ -1,0 +1,13 @@
+.git
+.gitignore
+.gradle
+.idea
+.env
+.env.*
+build
+frontend
+docs
+scripts
+src/test
+*.log
+.DS_Store

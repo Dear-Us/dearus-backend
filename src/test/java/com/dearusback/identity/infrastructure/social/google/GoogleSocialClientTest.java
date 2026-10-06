@@ -7,7 +7,10 @@ import static org.mockito.Mockito.when;
 
 import com.dearusback.identity.application.model.VerifiedSocialIdentity;
 import com.dearusback.identity.domain.exception.IdentityErrorCode;
+import com.dearusback.identity.infrastructure.config.AuthProperties;
 import com.dearusback.support.domain.exception.BusinessException;
+import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -16,6 +19,24 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 
 class GoogleSocialClientTest {
+
+    @Test
+    void rejectsGoogleLoginWhenClientIdIsNotConfigured() {
+        AuthProperties properties = new AuthProperties(
+                new AuthProperties.Jwt("dearus", "unused-test-secret"),
+                Duration.ofMinutes(30),
+                Duration.ofDays(30),
+                new AuthProperties.Google("", URI.create("https://example.com/jwks")),
+                new AuthProperties.Kakao(1234, URI.create("https://example.com")),
+                new AuthProperties.Naver(URI.create("https://example.com"))
+        );
+        GoogleSocialClient client = new GoogleSocialClient(properties);
+
+        assertThatThrownBy(() -> client.verify("google-id-token"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(exception -> assertThat(((BusinessException) exception).errorCode())
+                        .isEqualTo(IdentityErrorCode.SOCIAL_PROVIDER_UNAVAILABLE));
+    }
 
     @Test
     void mapsVerifiedGoogleSubjectAndProfile() {

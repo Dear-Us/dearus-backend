@@ -27,7 +27,7 @@ public record AuthProperties(
     }
 
     public record Google(
-            @NotBlank String clientId,
+            String clientId,
             @NotNull URI jwkSetUri
     ) {
     }

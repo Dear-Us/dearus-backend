@@ -20,6 +20,10 @@ public class SecurityConfiguration {
                 .securityMatcher(request -> {
                     String path = request.getRequestURI().substring(request.getContextPath().length());
                     if ("GET".equals(request.getMethod())
+                            && path.equals("/actuator/health")) {
+                        return true;
+                    }
+                    if ("GET".equals(request.getMethod())
                             && (path.equals("/swagger-ui.html") || path.startsWith("/swagger-ui/")
                             || path.equals("/v3/api-docs") || path.startsWith("/v3/api-docs/"))) {
                         return true;
