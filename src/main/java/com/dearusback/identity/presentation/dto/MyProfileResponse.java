@@ -3,6 +3,7 @@ package com.dearusback.identity.presentation.dto;
 import com.dearusback.identity.application.model.MyProfileResult;
 import com.dearusback.identity.domain.type.SocialProvider;
 import java.util.List;
+import java.util.function.BiFunction;
 
 public record MyProfileResponse(
         Long memberId,
@@ -14,12 +15,12 @@ public record MyProfileResponse(
         List<SocialAccountResponse> socialAccounts
 ) {
 
-    public static MyProfileResponse from(MyProfileResult result) {
+    public static MyProfileResponse from(MyProfileResult result, BiFunction<Long, String, String> imageUrlReader) {
         return new MyProfileResponse(
                 result.memberId(),
                 result.email(),
                 result.memberName(),
-                result.profileImageUrl(),
+                imageUrlReader.apply(result.memberId(), result.profileImageUrl()),
                 result.timezone(),
                 result.lastSelectedBabyId(),
                 result.socialAccounts().stream()

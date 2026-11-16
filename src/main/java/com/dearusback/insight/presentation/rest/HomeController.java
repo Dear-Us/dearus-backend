@@ -1,6 +1,7 @@
 package com.dearusback.insight.presentation.rest;
 
 import com.dearusback.insight.application.port.in.GetHomeUseCase;
+import com.dearusback.family.application.port.in.ReadBabyProfileImageUrlUseCase;
 import com.dearusback.insight.presentation.dto.HomeResponse;
 import com.dearusback.support.application.exception.CommonErrorCode;
 import com.dearusback.support.domain.exception.BusinessException;
@@ -20,9 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class HomeController {
 
     private final GetHomeUseCase homes;
+    private final ReadBabyProfileImageUrlUseCase imageUrls;
 
-    public HomeController(GetHomeUseCase homes) {
+    public HomeController(GetHomeUseCase homes, ReadBabyProfileImageUrlUseCase imageUrls) {
         this.homes = homes;
+        this.imageUrls = imageUrls;
     }
 
     @GetMapping("/api/v1/babies/{babyId}/home")
@@ -32,6 +35,7 @@ public class HomeController {
         if (babyId == null || babyId <= 0) {
             throw new BusinessException(CommonErrorCode.INVALID_REQUEST);
         }
-        return ResponseEntity.ok(ApiResponse.success(HomeResponse.from(homes.get(memberId, babyId))));
+        return ResponseEntity.ok(ApiResponse.success(
+                HomeResponse.from(homes.get(memberId, babyId), imageUrls::readUrl)));
     }
 }

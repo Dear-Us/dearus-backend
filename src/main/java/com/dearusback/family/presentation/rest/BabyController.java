@@ -9,6 +9,8 @@ import com.dearusback.family.application.port.in.GetBabyUseCase;
 import com.dearusback.family.application.port.in.GetBabyMembersUseCase;
 import com.dearusback.family.application.port.in.GetMyBabiesUseCase;
 import com.dearusback.family.application.port.in.UpdateBabyUseCase;
+import com.dearusback.family.application.port.in.ReadBabyProfileImageUrlUseCase;
+import com.dearusback.identity.application.port.in.ReadMemberProfileImageUrlUseCase;
 import com.dearusback.family.domain.exception.FamilyErrorCode;
 import com.dearusback.family.domain.exception.FamilyException;
 import com.dearusback.family.presentation.dto.BabyResponse;
@@ -47,16 +49,21 @@ public class BabyController {
     private final GetBabyMembersUseCase getBabyMembers;
     private final UpdateBabyUseCase updateBaby;
     private final DeleteBabyUseCase deleteBaby;
+    private final ReadBabyProfileImageUrlUseCase babyImageUrls;
+    private final ReadMemberProfileImageUrlUseCase memberImageUrls;
 
     public BabyController(CreateBabyUseCase useCase, GetMyBabiesUseCase getMyBabies, GetBabyUseCase getBaby,
                           GetBabyMembersUseCase getBabyMembers, UpdateBabyUseCase updateBaby,
-                          DeleteBabyUseCase deleteBaby) {
+                          DeleteBabyUseCase deleteBaby, ReadBabyProfileImageUrlUseCase babyImageUrls,
+                          ReadMemberProfileImageUrlUseCase memberImageUrls) {
         this.useCase = useCase;
         this.getMyBabies = getMyBabies;
         this.getBaby = getBaby;
         this.getBabyMembers = getBabyMembers;
         this.updateBaby = updateBaby;
         this.deleteBaby = deleteBaby;
+        this.babyImageUrls = babyImageUrls;
+        this.memberImageUrls = memberImageUrls;
     }
 
     @GetMapping("/{babyId}/members")
@@ -67,7 +74,7 @@ public class BabyController {
             throw new FamilyException(FamilyErrorCode.INVALID_BABY_ID);
         }
         return ResponseEntity.ok(ApiResponse.success(getBabyMembers.getMembers(memberId, babyId)
-                .stream().map(BabyMemberResponse::from).toList()));
+                .stream().map(summary -> BabyMemberResponse.from(summary, memberImageUrls::readUrl)).toList()));
     }
 
     @DeleteMapping("/{babyId}")
@@ -84,7 +91,8 @@ public class BabyController {
     @GetMapping
     @Operation(operationId = "listBabies", summary = "내 아기 목록 조회", tags = "Baby", description = "현재 회원이 ACTIVE 보호자로 연결된 삭제되지 않은 Baby 목록을 반환한다. 각 항목에 myRole이 포함된다.")
     public ResponseEntity<ApiResponse<List<BabyResponse>>> list(@AuthenticationPrincipal Long memberId) {
-        List<BabyResponse> babies = getMyBabies.getMyBabies(memberId).stream().map(BabyResponse::from).toList();
+        List<BabyResponse> babies = getMyBabies.getMyBabies(memberId).stream()
+                .map(summary -> BabyResponse.from(summary, babyImageUrls::readUrl)).toList();
         return ResponseEntity.ok(ApiResponse.success(babies));
     }
 
@@ -95,7 +103,8 @@ public class BabyController {
         if (babyId == null || babyId <= 0) {
             throw new FamilyException(FamilyErrorCode.INVALID_BABY_ID);
         }
-        return ResponseEntity.ok(ApiResponse.success(BabyResponse.from(getBaby.getBaby(memberId, babyId))));
+        return ResponseEntity.ok(ApiResponse.success(
+                BabyResponse.from(getBaby.getBaby(memberId, babyId), babyImageUrls::readUrl)));
     }
 
     @PatchMapping(value = "/{babyId}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -123,7 +132,7 @@ public class BabyController {
         }
         return ResponseEntity.ok(ApiResponse.success(BabyResponse.from(updateBaby.update(new UpdateBabyCommand(
                 memberId, babyId, request.babyName(), request.birthDate(), request.gender(),
-                request.shouldRemoveProfileImage(), image)))));
+                request.shouldRemoveProfileImage(), image)), babyImageUrls::readUrl)));
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -146,6 +155,6 @@ public class BabyController {
         }
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(BabyResponse.from(
                 useCase.create(new CreateBabyCommand(memberId, request.babyName(), request.birthDate(),
-                        request.gender(), image)))));
+                        request.gender(), image)), babyImageUrls::readUrl)));
     }
 }

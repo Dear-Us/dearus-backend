@@ -9,5 +9,7 @@ public interface ProfileImageStoragePort {
 
     boolean owns(Long memberId, String imageUrl);
 
+    String readUrl(Long memberId, String storedImageUrl);
+
     void deleteOwnedImage(Long memberId, String imageUrl);
 }

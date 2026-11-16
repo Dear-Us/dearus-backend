@@ -2795,6 +2795,11 @@ class BabyMariaDbIntegrationTest {
         }
 
         @Override
+        public String readUrl(String storedImageUrl) {
+            return storedImageUrl;
+        }
+
+        @Override
         public void deleteOwnedImage(String imageUrl) {
             deletedDuringTransaction.add(TransactionSynchronizationManager.isActualTransactionActive());
             if (failDelete.getAndSet(false)) {

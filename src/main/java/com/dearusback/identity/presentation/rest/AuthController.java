@@ -7,6 +7,7 @@ import com.dearusback.identity.application.model.LogoutCommand;
 import com.dearusback.identity.application.port.in.LogoutUseCase;
 import com.dearusback.identity.application.port.in.SocialLoginUseCase;
 import com.dearusback.identity.application.port.in.ReissueTokenUseCase;
+import com.dearusback.identity.application.port.in.ReadMemberProfileImageUrlUseCase;
 import com.dearusback.identity.domain.type.SocialProvider;
 import com.dearusback.identity.presentation.dto.ReissueTokenRequest;
 import com.dearusback.identity.presentation.dto.LogoutRequest;
@@ -31,15 +32,18 @@ public class AuthController {
     private final SocialLoginUseCase socialLoginUseCase;
     private final ReissueTokenUseCase reissueTokenUseCase;
     private final LogoutUseCase logoutUseCase;
+    private final ReadMemberProfileImageUrlUseCase imageUrls;
 
     public AuthController(
             SocialLoginUseCase socialLoginUseCase,
             ReissueTokenUseCase reissueTokenUseCase,
-            LogoutUseCase logoutUseCase
+            LogoutUseCase logoutUseCase,
+            ReadMemberProfileImageUrlUseCase imageUrls
     ) {
         this.socialLoginUseCase = socialLoginUseCase;
         this.reissueTokenUseCase = reissueTokenUseCase;
         this.logoutUseCase = logoutUseCase;
+        this.imageUrls = imageUrls;
     }
 
     @PostMapping("/login")
@@ -52,7 +56,7 @@ public class AuthController {
                 request.providerToken()
         );
         SocialLoginResult result = socialLoginUseCase.login(command);
-        return ResponseEntity.ok(ApiResponse.success(SocialLoginResponse.from(result)));
+        return ResponseEntity.ok(ApiResponse.success(SocialLoginResponse.from(result, imageUrls::readUrl)));
     }
 
     @PostMapping("/reissue")

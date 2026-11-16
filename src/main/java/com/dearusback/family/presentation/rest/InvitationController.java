@@ -2,6 +2,7 @@ package com.dearusback.family.presentation.rest;
 
 import com.dearusback.family.application.port.in.GetInvitationByTokenUseCase;
 import com.dearusback.family.application.port.in.AcceptInvitationUseCase;
+import com.dearusback.family.application.port.in.ReadBabyProfileImageUrlUseCase;
 import com.dearusback.family.presentation.dto.AcceptedInvitationResponse;
 import com.dearusback.family.presentation.dto.InvitationPreviewResponse;
 import com.dearusback.support.presentation.response.ApiResponse;
@@ -23,16 +24,20 @@ public class InvitationController {
 
     private final GetInvitationByTokenUseCase invitations;
     private final AcceptInvitationUseCase acceptInvitation;
+    private final ReadBabyProfileImageUrlUseCase imageUrls;
 
-    public InvitationController(GetInvitationByTokenUseCase invitations, AcceptInvitationUseCase acceptInvitation) {
+    public InvitationController(GetInvitationByTokenUseCase invitations, AcceptInvitationUseCase acceptInvitation,
+                                ReadBabyProfileImageUrlUseCase imageUrls) {
         this.invitations = invitations;
         this.acceptInvitation = acceptInvitation;
+        this.imageUrls = imageUrls;
     }
 
     @GetMapping("/{token}")
     @Operation(operationId = "getInvitation", summary = "초대 토큰 미리보기", tags = "Invitation", description = "인증 없이 원문 토큰으로 초대 상태와 Baby 정보를 확인한다. 토큰의 존재 여부는 토큰 소지자에게만 공개되며 URL 공유 시 유출에 주의한다.")
     public ResponseEntity<ApiResponse<InvitationPreviewResponse>> get(@PathVariable String token) {
-        return ResponseEntity.ok(ApiResponse.success(InvitationPreviewResponse.from(invitations.get(token))));
+        return ResponseEntity.ok(ApiResponse.success(
+                InvitationPreviewResponse.from(invitations.get(token), imageUrls::readUrl)));
     }
 
     @PostMapping("/{token}/accept")

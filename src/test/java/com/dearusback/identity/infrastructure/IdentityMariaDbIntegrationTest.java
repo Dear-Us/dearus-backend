@@ -1163,6 +1163,11 @@ class IdentityMariaDbIntegrationTest {
         }
 
         @Override
+        public String readUrl(Long memberId, String storedImageUrl) {
+            return storedImageUrl;
+        }
+
+        @Override
         public void deleteOwnedImage(Long memberId, String imageUrl) {
             deletedDuringTransaction.add(TransactionSynchronizationManager.isActualTransactionActive());
             if (failNextDelete.getAndSet(false)) {

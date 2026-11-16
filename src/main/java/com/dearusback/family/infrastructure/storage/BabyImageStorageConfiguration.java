@@ -2,7 +2,9 @@ package com.dearusback.family.infrastructure.storage;
 
 import com.dearusback.family.application.port.out.BabyProfileImageStoragePort;
 import java.net.URI;
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -11,6 +13,8 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
+import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 @Configuration
 @EnableConfigurationProperties(BabyImageStorageProperties.class)
@@ -30,11 +34,28 @@ public class BabyImageStorageConfiguration {
         return builder.build();
     }
 
+    @Bean(destroyMethod = "close")
+    @ConditionalOnProperty(prefix = "dearus.baby-image.storage", name = "enabled", havingValue = "true")
+    S3Presigner babyImageS3Presigner(BabyImageStorageProperties properties) {
+        var builder = S3Presigner.builder()
+                .region(Region.of(properties.region()))
+                .credentialsProvider(DefaultCredentialsProvider.create());
+        if (properties.endpoint() != null && !properties.endpoint().isBlank()) {
+            builder.endpointOverride(URI.create(properties.endpoint()))
+                    .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build());
+        }
+        return builder.build();
+    }
+
     @Bean
     @ConditionalOnProperty(prefix = "dearus.baby-image.storage", name = "enabled", havingValue = "true")
     BabyProfileImageStoragePort s3BabyImageStoragePort(
-            @Qualifier("babyImageS3Client") S3Client client, BabyImageStorageProperties properties) {
-        return new S3BabyImageStorageAdapter(client, properties.bucket(), properties.publicBaseUrl());
+            @Qualifier("babyImageS3Client") S3Client client,
+            @Qualifier("babyImageS3Presigner") S3Presigner presigner,
+            BabyImageStorageProperties properties,
+            @Value("${dearus.image.presigned-get-ttl:PT1H}") String readUrlTtl) {
+        return new S3BabyImageStorageAdapter(client, presigner, properties.bucket(),
+                properties.publicBaseUrl(), Duration.parse(readUrlTtl));
     }
 
     @Bean

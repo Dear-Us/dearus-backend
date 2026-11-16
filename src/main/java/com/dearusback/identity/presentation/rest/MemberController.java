@@ -7,6 +7,7 @@ import com.dearusback.identity.application.port.in.ChangeLastSelectedBabyUseCase
 import com.dearusback.identity.application.port.in.GetMyProfileQuery;
 import com.dearusback.identity.application.port.in.UpdateMyProfileUseCase;
 import com.dearusback.identity.application.port.in.WithdrawMemberUseCase;
+import com.dearusback.identity.application.port.in.ReadMemberProfileImageUrlUseCase;
 import com.dearusback.identity.domain.exception.IdentityErrorCode;
 import com.dearusback.identity.domain.exception.IdentityException;
 import com.dearusback.identity.presentation.dto.ChangeLastSelectedBabyRequest;
@@ -41,14 +42,17 @@ public class MemberController {
     private final UpdateMyProfileUseCase updateMyProfileUseCase;
     private final ChangeLastSelectedBabyUseCase changeLastSelectedBabyUseCase;
     private final WithdrawMemberUseCase withdrawMemberUseCase;
+    private final ReadMemberProfileImageUrlUseCase imageUrls;
 
     public MemberController(GetMyProfileQuery getMyProfileQuery, UpdateMyProfileUseCase updateMyProfileUseCase,
                             ChangeLastSelectedBabyUseCase changeLastSelectedBabyUseCase,
-                            WithdrawMemberUseCase withdrawMemberUseCase) {
+                            WithdrawMemberUseCase withdrawMemberUseCase,
+                            ReadMemberProfileImageUrlUseCase imageUrls) {
         this.getMyProfileQuery = getMyProfileQuery;
         this.updateMyProfileUseCase = updateMyProfileUseCase;
         this.changeLastSelectedBabyUseCase = changeLastSelectedBabyUseCase;
         this.withdrawMemberUseCase = withdrawMemberUseCase;
+        this.imageUrls = imageUrls;
     }
 
     @DeleteMapping("/me")
@@ -62,7 +66,7 @@ public class MemberController {
     @Operation(operationId = "getMyProfile", summary = "내 회원 정보 조회", tags = "Member", description = "활성 회원의 이메일, 이름, 이미지 URL, IANA timezone, 마지막 선택 Baby, 연결된 소셜 계정을 조회한다. lastSelectedBabyId와 profileImageUrl은 null일 수 있다.")
     public ResponseEntity<ApiResponse<MyProfileResponse>> me(@AuthenticationPrincipal Long memberId) {
         return ResponseEntity.ok(ApiResponse.success(MyProfileResponse.from(
-                getMyProfileQuery.getMyProfile(memberId)
+                getMyProfileQuery.getMyProfile(memberId), imageUrls::readUrl
         )));
     }
 
@@ -101,6 +105,7 @@ public class MemberController {
         UpdateMyProfileCommand command = new UpdateMyProfileCommand(
                 memberId, request.memberName(), request.shouldRemoveProfileImage(), upload
         );
-        return ResponseEntity.ok(ApiResponse.success(MyProfileResponse.from(updateMyProfileUseCase.update(command))));
+        return ResponseEntity.ok(ApiResponse.success(
+                MyProfileResponse.from(updateMyProfileUseCase.update(command), imageUrls::readUrl)));
     }
 }
