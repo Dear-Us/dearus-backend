@@ -9,6 +9,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.Locale;
 import org.junit.jupiter.api.Test;
@@ -35,15 +37,23 @@ class OpenApiContractTest {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         assertThat(api.path("info").path("title").asText()).isEqualTo("DearUs API");
         assertThat(api.path("info").path("version").asText()).isEqualTo("v1");
+        assertThat(api.path("info").path("description").asText())
+                .isEqualTo("DearUs는 아기의 일상과 성장 기록을 보호자가 함께 관리하는 육아 기록 서비스입니다.");
         assertThat(api.path("components").path("securitySchemes").path("bearerAuth")
                 .path("scheme").asText()).isEqualTo("bearer");
         assertThat(api.path("paths").has("/api/v1/auth/login")).isTrue();
         assertThat(api.path("paths").has("/api/v1/babies/{babyId}/records")).isTrue();
         assertThat(api.path("paths").has("/api/v1/babies/{babyId}/events")).isTrue();
         assertThat(api.path("paths").has("/api/v1/babies/{babyId}/growth-records")).isTrue();
-        assertThat(api.path("paths").has("/api/v1/babies/{babyId}/voice-commands")).isFalse();
+        assertThat(api.path("paths").has("/api/v1/babies/{babyId}/voice-commands")).isTrue();
+        assertThat(api.path("paths").path("/api/v1/babies/{babyId}/voice-commands")
+                .path("post").path("responses").has("202")).isTrue();
+        assertThat(api.path("paths").path("/api/v1/babies/{babyId}/voice-commands")
+                .path("post").path("requestBody").path("content").path("multipart/form-data")
+                .path("schema").path("properties").path("audio").path("format").asText()).isEqualTo("binary");
 
         Set<String> operationIds = new HashSet<>();
+        Map<String, Integer> operationsByTag = new HashMap<>();
         int operationCount = 0;
         for (var path : api.path("paths").properties()) {
             for (var method : path.getValue().properties()) {
@@ -54,14 +64,21 @@ class OpenApiContractTest {
                 assertThat(operation.path("description").asText()).isNotBlank();
                 assertThat(operation.path("tags").isEmpty()).isFalse();
                 assertThat(operationIds.add(id)).as(id).isTrue();
+                String tag = operation.path("tags").get(0).asText();
+                operationsByTag.merge(tag, 1, Integer::sum);
                 operationCount++;
             }
         }
-        assertThat(operationCount).isEqualTo(41);
+        assertThat(operationCount).isEqualTo(45);
+        assertThat(operationsByTag).containsExactlyInAnyOrderEntriesOf(Map.ofEntries(
+                Map.entry("Auth", 3), Map.entry("Member", 4), Map.entry("Baby", 5),
+                Map.entry("Baby Member", 4), Map.entry("Invitation", 5), Map.entry("Care Record", 10),
+                Map.entry("Home", 1), Map.entry("Event", 1), Map.entry("Voice", 4),
+                Map.entry("Statistics", 3), Map.entry("Growth", 5)));
         Set<String> tags = new HashSet<>();
         api.path("tags").forEach(tag -> assertThat(tags.add(tag.path("name").asText())).isTrue());
         assertThat(tags).containsExactlyInAnyOrder("Auth", "Member", "Baby", "Baby Member", "Invitation",
-                "Care Record", "Home", "Event", "Statistics", "Growth");
+                "Care Record", "Home", "Event", "Statistics", "Growth", "Voice");
         assertThat(api.path("paths").path("/api/v1/auth/login").path("post")
                 .path("security").isEmpty()).isTrue();
         assertThat(api.path("paths").path("/api/v1/members/me").path("get")
@@ -86,7 +103,14 @@ class OpenApiContractTest {
                 }
             }
         }
-        assertThat(mapped).isEqualTo(41);
+        assertThat(mapped).isEqualTo(45);
+        JsonNode voice = api.path("paths");
+        assertThat(voice.path("/api/v1/babies/{babyId}/voice-commands").has("post")).isTrue();
+        assertThat(voice.path("/api/v1/babies/{babyId}/voice-commands/{voiceRequestId}").has("get")).isTrue();
+        assertThat(voice.path("/api/v1/babies/{babyId}/voice-commands/{voiceRequestId}/confirm")
+                .has("post")).isTrue();
+        assertThat(voice.path("/api/v1/babies/{babyId}/voice-commands/{voiceRequestId}/cancel")
+                .has("post")).isTrue();
     }
 
     @Test
@@ -180,11 +204,98 @@ class OpenApiContractTest {
         assertThat(sse.path("401").path("content").has("application/json")).isTrue();
         assertThat(sse.path("200").path("content").path("text/event-stream").path("example").asText())
                 .contains("event: record-change", "RECORD_COMPLETED");
+        JsonNode voiceUpload = paths.path("/api/v1/babies/{babyId}/voice-commands").path("post");
+        JsonNode voiceMultipart = voiceUpload.path("requestBody").path("content").path("multipart/form-data")
+                .path("schema");
+        assertThat(voiceMultipart.path("required").toString()).contains("audio");
+        assertThat(voiceMultipart.path("properties").path("audio").path("format").asText())
+                .isEqualTo("binary");
+        assertThat(voiceUpload.path("responses").has("202")).isTrue();
+        String uploadResponseRef = voiceUpload.path("responses").path("202").path("content")
+                .path("application/json").path("schema").path("$ref").asText();
+        assertThat(uploadResponseRef).startsWith("#/components/schemas/ApiResponse");
+        JsonNode uploadEnvelope = api.path("components").path("schemas")
+                .path(uploadResponseRef.substring(uploadResponseRef.lastIndexOf('/') + 1));
+        assertThat(uploadEnvelope.path("properties").has("success")).isTrue();
+        assertThat(uploadEnvelope.path("properties").has("data")).isTrue();
+        assertThat(uploadEnvelope.path("properties").has("message")).isTrue();
+        JsonNode voiceConfirmOperation = paths.path("/api/v1/babies/{babyId}/voice-commands/{voiceRequestId}/confirm")
+                .path("post");
+        assertThat(voiceConfirmOperation.path("requestBody").path("required").asBoolean()).isFalse();
+        JsonNode voiceConfirm = voiceConfirmOperation.path("requestBody").path("content").path("application/json");
+        assertThat(voiceConfirm.path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/VoiceConfirmRequest");
+        JsonNode confirmForms = api.path("components").path("schemas").path("VoiceConfirmRequest").path("oneOf");
+        assertThat(confirmForms.size()).isEqualTo(2);
+        assertThat(confirmForms.get(0).path("additionalProperties").asBoolean()).isFalse();
+        assertThat(confirmForms.get(0).path("properties").size()).isZero();
+        assertThat(confirmForms.get(1).path("required").toString()).contains("action", "draft");
+        assertThat(confirmForms.get(1).path("additionalProperties").asBoolean()).isFalse();
+        assertThat(api.path("components").path("schemas").path("VoiceCommandResponse")
+                .path("properties").path("voiceRequestId").isMissingNode()).isFalse();
     }
 
     @Test
     void uiIsPublicWhileBusinessEndpointRemainsProtected() throws Exception {
         mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isOk());
         mvc.perform(get("/api/v1/members/me")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void voiceDocumentationMatchesControllerFieldsHeadersAndFailureEnvelope() throws Exception {
+        JsonNode api = mapper.readTree(mvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        String root = "/api/v1/babies/{babyId}/voice-commands";
+        JsonNode upload = api.path("paths").path(root).path("post");
+        JsonNode read = api.path("paths").path(root + "/{voiceRequestId}").path("get");
+        JsonNode confirm = api.path("paths").path(root + "/{voiceRequestId}/confirm").path("post");
+        JsonNode cancel = api.path("paths").path(root + "/{voiceRequestId}/cancel").path("post");
+        for (JsonNode operation : new JsonNode[]{upload, read, confirm, cancel}) {
+            assertThat(operation.path("security").toString()).contains("bearerAuth");
+            assertThat(operation.path("parameters").toString()).contains("babyId");
+            assertThat(operation.path("responses").path("401").path("content")
+                    .has("application/json")).isTrue();
+            assertThat(operation.path("responses").path("500").path("content")
+                    .has("application/json")).isTrue();
+        }
+        assertThat(upload.path("parameters").toString()).contains("Idempotency-Key");
+        assertThat(upload.path("responses").path("202").path("headers")
+                .has("Location")).isTrue();
+        assertThat(upload.path("responses").path("202").path("content")
+                .path("application/json").path("examples").size()).isPositive();
+        assertThat(read.path("parameters").toString()).contains("voiceRequestId");
+        assertThat(read.path("responses").path("200").path("content")
+                .path("application/json").path("examples").size()).isEqualTo(4);
+        assertThat(confirm.path("requestBody").path("content").has("application/json")).isTrue();
+        assertThat(confirm.path("requestBody").path("content").path("application/json")
+                .path("examples").size()).isEqualTo(2);
+        assertThat(cancel.has("requestBody")).isFalse();
+        assertThat(confirm.path("responses").path("200").path("content")
+                .path("application/json").path("examples").size()).isEqualTo(1);
+        assertThat(cancel.path("responses").path("200").path("content")
+                .path("application/json").path("examples").size()).isEqualTo(1);
+        assertThat(upload.path("responses").path("503").path("content")
+                .path("application/json").path("examples").toString())
+                .contains("음성 기능을 사용할 수 없습니다.").doesNotContain("아기 프로필 이미지");
+        assertThat(read.path("responses").path("404").path("content")
+                .path("application/json").path("examples").toString())
+                .contains("음성 요청을 찾을 수 없습니다.");
+
+        JsonNode fields = api.path("components").path("schemas").path("VoiceCommandResponse")
+                .path("properties");
+        Set<String> names = new HashSet<>();
+        fields.properties().forEach(field -> names.add(field.getKey()));
+        assertThat(names).containsExactlyInAnyOrder("voiceRequestId", "status", "pending", "transcript",
+                "action", "draft", "recordId", "failureReason", "createdAt", "updatedAt");
+        for (JsonNode operation : new JsonNode[]{upload, read, confirm, cancel}) {
+            for (var entry : operation.path("responses").properties()) {
+                for (var example : entry.getValue().path("content").path("application/json")
+                        .path("examples").properties()) {
+                    JsonNode body = example.getValue().path("value");
+                    assertThat(body.has("success") && body.has("data") && body.has("message"))
+                            .as(entry.getKey() + " " + example.getKey()).isTrue();
+                    assertThat(body.has("errorCode")).isFalse();
+                }
+            }
+        }
     }
 }

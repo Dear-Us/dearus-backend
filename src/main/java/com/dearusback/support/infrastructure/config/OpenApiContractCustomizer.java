@@ -12,6 +12,7 @@ import io.swagger.v3.oas.models.media.NumberSchema;
 import io.swagger.v3.oas.models.media.ObjectSchema;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
+import io.swagger.v3.oas.models.headers.Header;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.tags.Tag;
@@ -34,7 +35,8 @@ public class OpenApiContractCustomizer {
     private static final Set<String> CONFLICT = Set.of("login", "withdrawMember",
             "removeBabyCaregiver", "leaveBaby", "transferBabyOwnership",
             "cancelInvitation", "acceptInvitation", "startCareRecord", "completeCareRecord", "cancelCareRecord",
-            "updateCareRecord", "deleteCareRecord", "updateGrowthRecord", "deleteGrowthRecord");
+            "updateCareRecord", "deleteCareRecord", "updateGrowthRecord", "deleteGrowthRecord",
+            "uploadVoiceCommand", "confirmVoiceCommand", "cancelVoiceCommand");
     private static final Set<String> NO_BAD_REQUEST = Set.of("listBabies", "getMyProfile", "withdrawMember",
             "getInvitation");
 
@@ -47,14 +49,16 @@ public class OpenApiContractCustomizer {
             api.setTags(List.copyOf(tags.values()));
             api.getPaths().forEach((path, item) -> item.readOperations().forEach(operation -> {
                 String id = operation.getOperationId();
+                if ("listBabyMembers".equals(id)) operation.setTags(List.of("Baby Member"));
                 parameters(operation);
                 multipart(operation);
                 request(operation, mapper);
-                success(operation);
+                success(operation, mapper);
                 if ("subscribeRecordEvents".equals(id)) {
                     sse(operation);
                 }
                 errors(path, operation, id);
+                voiceErrors(operation, id, mapper);
             }));
         };
     }
@@ -67,6 +71,12 @@ public class OpenApiContractCustomizer {
                 case "babyId" -> id(parameter, "아기 ID, 양의 정수", 1);
                 case "memberId" -> id(parameter, "보호자 회원 ID, 양의 정수", 2);
                 case "recordId" -> id(parameter, "육아 기록 ID, 양의 정수", 101);
+                case "voiceRequestId" -> id(parameter, "음성 요청 ID, 양의 정수", 101);
+                case "Idempotency-Key" -> parameter(parameter,
+                        "업로드 재시도에 재사용할 UUID. 같은 회원·키에 다른 아기/파일/MIME이면 409",
+                        "123e4567-e89b-42d3-a456-426614174000",
+                        new StringSchema().format("uuid").pattern(
+                                "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"));
                 case "growthRecordId" -> id(parameter, "성장 기록 ID, 양의 정수", 101);
                 case "invitationId" -> id(parameter, "초대 ID, 양의 정수", 10);
                 case "token" -> parameter(parameter, "초대 URL에 포함된 일회성 원문 토큰", "invitation-token",
@@ -107,12 +117,21 @@ public class OpenApiContractCustomizer {
         if (operation.getRequestBody() == null) return;
         MediaType multipart = operation.getRequestBody().getContent().get("multipart/form-data");
         if (multipart == null) return;
-        multipart.addEncoding("request", new Encoding().contentType("application/json"));
+        if (multipart.getSchema() != null && multipart.getSchema().getProperties() != null
+                && multipart.getSchema().getProperties().containsKey("request")) {
+            multipart.addEncoding("request", new Encoding().contentType("application/json"));
+        }
         if (multipart.getSchema() != null && multipart.getSchema().getProperties() != null) {
             Schema<?> image = (Schema<?>) multipart.getSchema().getProperties().get("profileImage");
             if (image != null) image.setDescription("createBaby".equals(operation.getOperationId())
                     ? "선택 파일. JPEG/PNG/WebP, 최대 5 MiB."
                     : "선택 파일. JPEG/PNG/WebP, 최대 5 MiB. 제거 플래그와 동시 사용 불가.");
+            Schema<?> audio = (Schema<?>) multipart.getSchema().getProperties().get("audio");
+            if (audio != null) {
+                audio.setDescription("필수 음성 파일. M4A/MP4 또는 WAV, 기본 최대 5 MiB. MIME과 컨테이너 헤더를 검사한다.");
+                multipart.addExamples("WAV 파일 업로드", new Example().summary("audio 바이너리 파일 part")
+                        .value(Map.of("audio", "<binary WAV file>")));
+            }
         }
     }
 
@@ -150,6 +169,11 @@ public class OpenApiContractCustomizer {
                 json.setSchema(ref("GrowthUpdateRequest"));
                 examples(json, mapper, Map.of("몸무게 수정", "{\"version\":0,\"weightKg\":6.9}"));
             }
+            case "confirmVoiceCommand" -> {
+                json.setSchema(ref("VoiceConfirmRequest"));
+                examples(json, mapper, Map.of("투약 확인", "{}",
+                        "검토 내용 수정", "{\"action\":\"CREATE_COMPLETED_RECORD\",\"draft\":{\"recordType\":\"OTHER\",\"recordedAt\":\"2026-10-05T18:30:00+09:00\",\"detail\":{\"title\":\"목욕\"}}}"));
+            }
             default -> { }
         }
     }
@@ -159,10 +183,125 @@ public class OpenApiContractCustomizer {
                 new Example().summary(name).value(mapper.readValue(value, Object.class))));
     }
 
-    private void success(Operation operation) {
-        if (!CREATED.contains(operation.getOperationId())) return;
-        ApiResponse response = operation.getResponses().remove("200");
-        if (response != null) operation.getResponses().addApiResponse("201", response.description("생성 완료"));
+    private void success(Operation operation, ObjectMapper mapper) {
+        if ("uploadVoiceCommand".equals(operation.getOperationId())) {
+            ApiResponse accepted = operation.getResponses().remove("200");
+            if (accepted != null) operation.getResponses().addApiResponse("202", accepted
+                    .description("비동기 처리 요청 접수. Location의 GET으로 상태 조회")
+                    .addHeaderObject("Location", new Header().description("음성 요청 조회 경로")
+                            .schema(new StringSchema().example(
+                                    "/api/v1/babies/1/voice-commands/101"))));
+            voiceJsonResponse(operation);
+            voiceSuccessExamples(operation, mapper);
+            return;
+        }
+        if (CREATED.contains(operation.getOperationId())) {
+            ApiResponse response = operation.getResponses().remove("200");
+            if (response != null) operation.getResponses().addApiResponse("201", response.description("생성 완료"));
+        }
+        if (Set.of("getVoiceCommand", "confirmVoiceCommand", "cancelVoiceCommand")
+                .contains(operation.getOperationId())) {
+            voiceJsonResponse(operation);
+            voiceSuccessExamples(operation, mapper);
+        }
+    }
+
+    private void voiceSuccessExamples(Operation operation, ObjectMapper mapper) {
+        String id = operation.getOperationId();
+        ApiResponse response = operation.getResponses().get("uploadVoiceCommand".equals(id) ? "202" : "200");
+        if (response == null || response.getContent() == null) return;
+        MediaType json = response.getContent().get("application/json");
+        if (json == null) return;
+        String pending = """
+                {"success":true,"data":{"voiceRequestId":101,"status":null,"pending":true,
+                "transcript":null,"action":null,"draft":null,"recordId":null,"failureReason":null,
+                "createdAt":"2026-10-09T00:00:00Z","updatedAt":"2026-10-09T00:00:00Z"},"message":null}
+                """;
+        switch (id) {
+            case "uploadVoiceCommand" -> examples(json, mapper, Map.of("접수·처리 중", pending));
+            case "getVoiceCommand" -> examples(json, mapper, Map.of(
+                    "처리 중", pending,
+                    "자동 저장 완료", """
+                            {"success":true,"data":{"voiceRequestId":101,"status":"AUTO_SAVED","pending":false,
+                            "transcript":"목욕했어","action":"CREATE_COMPLETED_RECORD",
+                            "draft":{"recordType":"OTHER","recordedAt":"2026-10-09T08:30:00+09:00","detail":{"title":"목욕"}},
+                            "recordId":201,"failureReason":null,"createdAt":"2026-10-09T00:00:00Z",
+                            "updatedAt":"2026-10-09T00:00:02Z"},"message":null}
+                            """,
+                    "검토 필요", """
+                            {"success":true,"data":{"voiceRequestId":101,"status":"REVIEW_REQUIRED","pending":false,
+                            "transcript":"아기 기록해 줘","action":null,"draft":null,"recordId":null,
+                            "failureReason":null,"createdAt":"2026-10-09T00:00:00Z",
+                            "updatedAt":"2026-10-09T00:00:02Z"},"message":null}
+                            """,
+                    "분석 실패", """
+                            {"success":true,"data":{"voiceRequestId":101,"status":"FAILED","pending":false,
+                            "transcript":null,"action":null,"draft":null,"recordId":null,
+                            "failureReason":"TRANSCRIPTION_FAILED","createdAt":"2026-10-09T00:00:00Z",
+                            "updatedAt":"2026-10-09T00:00:02Z"},"message":null}
+                            """));
+            case "confirmVoiceCommand" -> examples(json, mapper, Map.of("확정 완료", """
+                    {"success":true,"data":{"voiceRequestId":101,"status":"CONFIRMED","pending":false,
+                    "transcript":"해열제 2.5밀리리터 먹였어","action":"CREATE_COMPLETED_RECORD",
+                    "draft":{"recordType":"MEDICINE","recordedAt":"2026-10-09T08:30:00+09:00",
+                    "detail":{"medicineName":"해열제","doseValue":2.5,"doseUnit":"ML"}},
+                    "recordId":201,"failureReason":null,"createdAt":"2026-10-09T00:00:00Z",
+                    "updatedAt":"2026-10-09T00:00:02Z"},"message":null}
+                    """));
+            case "cancelVoiceCommand" -> examples(json, mapper, Map.of("취소 완료", """
+                    {"success":true,"data":{"voiceRequestId":101,"status":"CANCELED","pending":false,
+                    "transcript":null,"action":null,"draft":null,"recordId":null,"failureReason":null,
+                    "createdAt":"2026-10-09T00:00:00Z","updatedAt":"2026-10-09T00:00:01Z"},"message":null}
+                    """));
+            default -> { }
+        }
+    }
+
+    private void voiceErrors(Operation operation, String id, ObjectMapper mapper) {
+        if (!Set.of("uploadVoiceCommand", "getVoiceCommand", "confirmVoiceCommand", "cancelVoiceCommand")
+                .contains(id)) return;
+        Map<String, Map<String, String>> messages = new LinkedHashMap<>();
+        messages.put("400", Map.of("잘못된 음성 요청", "음성 요청 정보가 올바르지 않습니다."));
+        messages.put("401", Map.of("인증 실패", "인증 정보가 유효하지 않습니다."));
+        messages.put("403", Map.of("탈퇴한 회원", "탈퇴한 회원입니다."));
+        messages.put("404", Map.of("아기 접근 불가", "아기 정보를 찾을 수 없습니다.",
+                "음성 요청 접근 불가", "음성 요청을 찾을 수 없습니다."));
+        if ("uploadVoiceCommand".equals(id)) {
+            messages.put("400", Map.of("잘못된 음성 요청", "음성 요청 정보가 올바르지 않습니다.",
+                    "잘못된 오디오", "음성 파일이 올바르지 않습니다."));
+            messages.put("409", Map.of("중복 키 충돌", "음성 요청 상태가 충돌합니다."));
+            messages.put("413", Map.of("오디오 크기 초과", "음성 파일 크기를 초과했습니다.",
+                    "multipart 크기 초과", "요청 파일 크기가 허용 범위를 초과했습니다."));
+            messages.put("503", Map.of("Voice 비활성화", "음성 기능을 사용할 수 없습니다."));
+        } else if ("confirmVoiceCommand".equals(id)) {
+            messages.put("409", Map.of("확정·취소 상태 충돌", "음성 요청 상태가 충돌합니다.",
+                    "Care 진행 기록 충돌", "이미 진행 중인 기록이 있습니다."));
+        } else if ("cancelVoiceCommand".equals(id)) {
+            messages.put("409", Map.of("취소 불가 상태", "음성 요청 상태가 충돌합니다."));
+        }
+        messages.put("500", Map.of("예상치 못한 서버 오류", "서버 내부 오류가 발생했습니다."));
+        messages.forEach((status, variants) -> {
+            ApiResponse response = operation.getResponses().get(status);
+            if (response == null) {
+                response = new ApiResponse().description("예상치 못한 서버 오류").content(new Content()
+                        .addMediaType("application/json", new MediaType().schema(ref("ApiFailure"))));
+                operation.getResponses().addApiResponse(status, response);
+            }
+            MediaType json = response.getContent().get("application/json");
+            if (json == null) return;
+            json.setExamples(new LinkedHashMap<>());
+            variants.forEach((name, message) -> json.addExamples(name, new Example().summary(name)
+                    .value(mapper.readValue("{\"success\":false,\"data\":null,\"message\":\""
+                            + message + "\"}", Object.class))));
+        });
+    }
+
+    private void voiceJsonResponse(Operation operation) {
+        operation.getResponses().values().forEach(response -> {
+            if (response.getContent() == null) return;
+            MediaType wildcard = response.getContent().remove("*/*");
+            if (wildcard != null) response.getContent().addMediaType("application/json", wildcard);
+        });
     }
 
     private void errors(String path, Operation operation, String id) {
@@ -182,6 +321,10 @@ public class OpenApiContractCustomizer {
         if (Set.of("updateMyProfile", "createBaby", "updateBaby").contains(id)) {
             statuses.put(413, "이미지 또는 multipart 요청 크기 제한 초과");
             statuses.put(503, "이미지 저장소를 사용할 수 없음");
+        }
+        if ("uploadVoiceCommand".equals(id)) {
+            statuses.put(413, "음성 파일 크기 제한 초과");
+            statuses.put(503, "음성 기능 비활성화 또는 제공자 미설정");
         }
         if ("login".equals(id)) statuses.put(503, "소셜 제공자를 사용할 수 없음");
         statuses.forEach((code, description) -> {
@@ -288,6 +431,22 @@ public class OpenApiContractCustomizer {
                 "heightCm", nullableNumber("키 cm, null이면 제거", 62.5),
                 "weightKg", nullableNumber("몸무게 kg, null이면 제거", 6.8),
                 "memo", nullableString("null이면 메모 제거", "수정")), "version"));
+        ComposedSchema voiceDraft = new ComposedSchema();
+        voiceDraft.setDescription("action별 Care 생성/시작 DTO 또는 END_RECORD의 {recordId} 객체");
+        voiceDraft.addOneOfItem(ref("CareCreateRequest"));
+        voiceDraft.addOneOfItem(ref("CareStartRequest"));
+        voiceDraft.addOneOfItem(object("진행형 기록 완료 대상", Map.of("recordId", positive("기록 ID", 101)), "recordId"));
+        Schema<?> unchangedVoiceConfirmation = object("기존 초안을 그대로 확인하는 빈 객체", Map.of());
+        unchangedVoiceConfirmation.setAdditionalProperties(false);
+        Schema<?> editedVoiceConfirmation = object("REVIEW_REQUIRED 초안 수정: action과 draft를 함께 전달", Map.of(
+                "action", choice("실행할 Care 명령", "CREATE_COMPLETED_RECORD", "START_RECORD", "END_RECORD"),
+                "draft", voiceDraft), "action", "draft");
+        editedVoiceConfirmation.setAdditionalProperties(false);
+        ComposedSchema voiceConfirm = new ComposedSchema();
+        voiceConfirm.setDescription("CONFIRMATION_REQUIRED는 {}, REVIEW_REQUIRED는 {} 또는 action/draft 쌍");
+        voiceConfirm.addOneOfItem(unchangedVoiceConfirmation);
+        voiceConfirm.addOneOfItem(editedVoiceConfirmation);
+        schemas.put("VoiceConfirmRequest", voiceConfirm);
 
         describeResponseSchemas(schemas);
         schemas.forEach((name, schema) -> {
@@ -322,7 +481,7 @@ public class OpenApiContractCustomizer {
         field(schemas, "InvitationSummaryResponse", "acceptedAt", "수락하지 않았으면 null", null);
         field(schemas, "InvitationSummaryResponse", "canceledAt", "취소하지 않았으면 null", null);
         field(schemas, "CareRecordResponse", "recordType", "FEEDING 수유 / SLEEP 수면 / DIAPER 기저귀 / TEMPERATURE 체온 / MEDICINE 투약 / OTHER 기타", "SLEEP");
-        field(schemas, "CareRecordResponse", "inputType", "MANUAL 직접 입력 / VOICE 음성 입력(현재 Voice API 미구현)", "MANUAL");
+        field(schemas, "CareRecordResponse", "inputType", "MANUAL 직접 입력 / VOICE 음성 입력", "MANUAL");
         field(schemas, "CareRecordResponse", "status", "COMPLETED 완료 / IN_PROGRESS 진행 중 / CANCELED 취소", "COMPLETED");
         field(schemas, "CareRecordResponse", "recordedAt", "SLEEP 외 기록 시각. SLEEP에서는 null", null);
         field(schemas, "CareRecordResponse", "startAt", "SLEEP 시작. 다른 유형에서는 null", null);
@@ -342,6 +501,16 @@ public class OpenApiContractCustomizer {
         field(schemas, "GrowthRecordResponse", "weightKg", "몸무게 kg. 입력하지 않았으면 null", 6.8);
         field(schemas, "GrowthRecordResponse", "memo", "메모 없음은 null", null);
         field(schemas, "GrowthRecordResponse", "version", "PATCH/DELETE에 전달할 낙관적 버전", 0);
+        field(schemas, "VoiceCommandResponse", "voiceRequestId", "음성 요청 ID", 101);
+        field(schemas, "VoiceCommandResponse", "status", "결과 상태. 처리 중에는 null: AUTO_SAVED 자동 반영 / REVIEW_REQUIRED 검토 필요 / CONFIRMATION_REQUIRED 명시적 확인 필요 / CONFIRMED 확인 반영 / FAILED 실패 / CANCELED 취소", null);
+        field(schemas, "VoiceCommandResponse", "pending", "처리 중 true. 결과 결정 후 false", false);
+        field(schemas, "VoiceCommandResponse", "transcript", "STT 결과. 전사 전·실패 시 null 가능", null);
+        field(schemas, "VoiceCommandResponse", "action", "Care 동작. 없으면 null: CREATE_COMPLETED_RECORD / START_RECORD / END_RECORD", null);
+        field(schemas, "VoiceCommandResponse", "draft", "확인·수정할 Care 명령 JSON. 없으면 null", null);
+        field(schemas, "VoiceCommandResponse", "recordId", "Care 기록 ID. 아직 반영되지 않았거나 실패·취소면 null", 201);
+        field(schemas, "VoiceCommandResponse", "failureReason", "FAILED의 안전한 실패 사유. 그 외에는 null", null);
+        field(schemas, "VoiceCommandResponse", "createdAt", "요청 생성 시각 UTC ISO 8601", null);
+        field(schemas, "VoiceCommandResponse", "updatedAt", "마지막 상태 변경 시각 UTC ISO 8601", null);
         field(schemas, "Feeding", "formulaTotalMl", "분유 기록이 없으면 0", 0);
         field(schemas, "Feeding", "totalCount", "수유 기록 건수. 없으면 0", 0);
         field(schemas, "Feeding", "formulaCount", "분유 기록 건수. 없으면 0", 0);

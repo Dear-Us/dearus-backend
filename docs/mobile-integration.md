@@ -1,6 +1,6 @@
 # DearUs 모바일 앱 연동 가이드
 
-이 문서는 현재 `dev` 백엔드 구현을 기준으로 한다. iOS·Android의 네이티브 HTTP 클라이언트를 대상으로 하며 특정 앱 프레임워크에 의존하지 않는다. **Voice API(`VOICE-01~04`)는 현재 미구현**이다. 아래 Voice 항목은 준비 상태와 앱 측 책임만 설명하며, 호출 가능한 계약이나 지원 오디오 형식을 약속하지 않는다.
+이 문서는 현재 `dev` 백엔드 구현을 기준으로 한다. iOS·Android의 네이티브 HTTP 클라이언트를 대상으로 하며 특정 앱 프레임워크에 의존하지 않는다. Voice API의 HTTP·상태 관리 흐름과 Google/OpenAI 제공자 코드는 구현되었지만 기능 플래그는 기본 비활성화이며 제공자 실호출·배포 검증은 별도다.
 
 ## 1. Environment / Base URL
 
@@ -48,11 +48,11 @@ Refresh Token은 매 재발급마다 rotation되며 이전 토큰은 다시 사�
 - PATCH에서 이미지 part를 생략하고 `removeProfileImage`가 `true`가 아니면 이미지는 유지된다. `removeProfileImage: true`이면 사진을 제거한다. 제거 플래그와 이미지 part를 동시에 보내면 400이다. MEMBER-02/BABY-04에서 변경할 필드가 전혀 없으면 400이다. BABY-02에는 제거 플래그가 없다.
 - 실제 이미지 저장 기능은 해당 저장소 어댑터가 운영 설정으로 활성화되어 있어야 한다. 미설정 상태에서 사진 업로드를 시도하면 503이 가능하다.
 
-## 7. Voice Audio — 현재 미구현
+## 7. Voice Audio — 제공자 실호출 검증 전
 
-- 계획 경로 `POST /api/v1/babies/{babyId}/voice-commands`와 `audio` part는 **현재 `dev`에 없다**. 따라서 MIME, 파일 크기, 인코딩, sample rate, 응답·재시도·422 계약을 현재 지원 기능으로 표기하거나 앱에서 호출하면 안 된다.
-- 기능이 구현될 때 앱은 마이크 권한, 녹음 시작·중지, 파일 업로드, 로딩 상태, 사용자 주도 재시도를 담당한다. Google STT SDK나 Google credential을 모바일 앱에 넣지 않는 설계가 목표이며, 계획된 흐름은 `Mobile → DearUs API → Google STT → LLM → Care`이다. **현재는 STT/LLM 서버 어댑터도 없다.**
-- Voice POST의 자동 무한 재시도는 피한다. 실제 중복 처리·재시도 계약은 Voice 구현 이후 확정해야 한다.
+- `POST /api/v1/babies/{babyId}/voice-commands`는 필수 `audio` multipart part와 `Idempotency-Key` UUID 헤더를 받는다. MIME은 M4A/MP4(`audio/mp4`, `audio/x-m4a`, `audio/m4a`) 및 WAV(`audio/wav`, `audio/x-wav`, `audio/wave`)이며 기본 최대 크기는 5 MiB다. 접수 시 202와 `Location` 헤더, `voiceRequestId`를 반환한다.
+- `GET /api/v1/babies/{babyId}/voice-commands/{voiceRequestId}`로 결과를 폴링한다. 응답 `data`는 `status`, `pending`, `transcript`, `action`, `draft`, `recordId`, `failureReason`, `createdAt`, `updatedAt`를 포함한다. 상태가 `REVIEW_REQUIRED`면 `POST .../confirm`에 수정한 `action`과 `draft`를 함께 보내고, `CONFIRMATION_REQUIRED`면 `{}`로 확인한다. `POST .../cancel`은 반영 전 요청만 취소한다.
+- 앱은 마이크 권한, 녹음 시작·중지, 파일 업로드, 로딩 상태, 사용자 주도 재시도를 담당한다. 재시도할 때는 같은 UUID와 같은 파일을 사용한다. Google credential이나 OpenAI API 키를 앱에 넣지 않는다. 서버 기능 플래그는 기본 비활성화이며 그 상태의 업로드는 503을 반환한다. 실제 음성 처리에는 선택한 제공자의 서버 설정·배포·실호출 검증이 필요하다.
 
 ## 8. SSE
 
@@ -88,13 +88,13 @@ Refresh Token은 매 재발급마다 rotation되며 이전 토큰은 다시 사�
 | 413 | 이미지 업로드 크기 제한 초과 |
 | 503 | 현재 외부 소셜 제공자 또는 이미지 저장소 이용 불가 가능. 상황에 맞춰 사용자에게 안내 |
 
-Voice가 구현되지 않아 **Voice 전용 422와 STT/LLM 장애용 502/503은 현재 보장된 응답 계약이 아니다.** 모든 현재 REST 오류의 본문은 공통 실패 봉투이며 내부 `errorCode`는 노출되지 않는다. 네트워크 timeout 후 `Record create`, `Invitation accept`, 향후 `Voice POST`를 결과 확인 없이 무한 자동 재시도하지 않는다.
+Voice Provider 장애는 Voice 요청 상태 조회의 안전한 실패 사유로 확인해야 하며, **STT/LLM 원본 오류 본문은 외부에 전달되지 않는다.** 모든 현재 REST 오류의 본문은 공통 실패 봉투이며 내부 `errorCode`는 노출되지 않는다. 네트워크 timeout 후 `Record create`, `Invitation accept`, `Voice POST`를 결과 확인 없이 무한 자동 재시도하지 않는다.
 
 ## 12. Version Conflict
 
 - Care/ Growth 상세 조회 응답의 `version`을 저장한다. 수정 `PATCH`는 JSON body의 `version`에 그 값을 넣고, 삭제 `DELETE`는 `?version={값}` query parameter로 전달한다. 이는 Access Token query 전달 허용과 무관하다.
 - 409를 받으면 PATCH/DELETE를 무조건 재전송하지 말고 최신 상세를 GET으로 다시 조회해 사용자에게 현재 상태를 보여준다. 수정 성공 후 응답의 새 `version`을 사용한다.
-- `409`는 이미 진행 중인 Care 기록, complete/cancel 경합, 초대 상태 충돌 등 버전 이외에도 발생할 수 있다. Voice confirm 경합은 아직 미구현이므로 현재 계약으로 간주하지 않는다.
+- `409`는 이미 진행 중인 Care 기록, complete/cancel 경합, 초대 상태 충돌 등 버전 이외에도 발생할 수 있다. Voice confirm/cancel 경합은 하나의 최종 상태만 유효하며 409를 받은 앱은 Voice GET으로 결과를 재조회한다. 세부 상태와 요청 형식은 [Voice API 상세 명세](api/voice-api-notion.md)를 따른다.
 
 ## 13. App Lifecycle
 
@@ -110,5 +110,5 @@ Voice가 구현되지 않아 **Voice 전용 422와 STT/LLM 장애용 502/503은 
 - [ ] 이미지 저장을 사용할 경우 두 `*_STORAGE_ENABLED` 및 bucket/region/HTTPS `*_PUBLIC_BASE_URL`을 설정하고 실제 이미지 접근 확인.
 - [ ] JWT secret, DB 암호, OAuth 설정을 환경변수로 제공. 앱에는 백엔드 secret·Google STT credential을 넣지 않음.
 - [ ] 동시 401 단일 재발급, Refresh Rotation 저장, 409 별도 처리, 앱 복귀·네트워크 변경 시 SSE 재연결 검증.
-- [ ] Voice API는 구현·오디오 형식·Provider 설정·통합 테스트가 완료되기 전까지 앱에서 비활성화.
+- [ ] Voice API는 선택한 제공자의 설정·실호출·배포 검증이 완료되기 전까지 앱에서 비활성화.
 - [ ] 현재 백엔드에는 별도 CORS 허용 설정이 없다. 네이티브 모바일 HTTP에는 일반적인 브라우저 CORS 허용이 필요하지 않다. Web/Swagger 클라이언트가 추가되면 그 출처를 별도 확정해야 하며 운영에서 `*`를 허용하지 않는다.
