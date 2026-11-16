@@ -35,3 +35,15 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Local runtime configuration and secrets ###
+.env
+.env.*
+!.env.example
+
+### Local deployment backup and generated presentation previews ###
+.deploy-backup/
+.DS_Store
+design-previews/
+slides_preview/
+DearUs_Presentation_Preview.png

@@ -11,3 +11,5 @@ scripts
 src/test
 *.log
 .DS_Store
+
+.deploy-backup/
