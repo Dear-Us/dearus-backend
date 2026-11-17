@@ -89,6 +89,11 @@ public final class S3BabyImageStorageAdapter implements BabyProfileImageStorageP
         }
     }
 
+    @Override
+    public boolean owns(String imageUrl) {
+        return ownedKey(imageUrl) != null;
+    }
+
     private String ownedKey(String imageUrl) {
         if (imageUrl == null) {
             return null;

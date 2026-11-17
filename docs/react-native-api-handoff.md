@@ -86,15 +86,42 @@
 
 ### 사진 multipart
 
-`PATCH /members/me`, `POST /babies`, `PATCH /babies/{babyId}`는 `multipart/form-data`다. 필수 part 이름은 `request`, 이 part의 **Content-Type은 `application/json`**이며 내용은 JSON이다. 선택 파일 part 이름은 `profileImage`. 지원 MIME은 JPEG/PNG/WebP, 파일당 최대 5 MiB, 전체 multipart 최대 6 MB. React Native 로컬 파일 URI를 **파일 바이트**로 전송한다. `Content-Type: multipart/form-data`의 boundary는 클라이언트 라이브러리에 맡기며 직접 고정하지 않는다.
+`PATCH /members/me`, `POST /babies`, `PATCH /babies/{babyId}`는 파일 업로드 시 `multipart/form-data`를 받는다. 필수 part 이름은 `request`, 이 part의 **Content-Type은 `application/json`**이며 내용은 JSON이다. 선택 파일 part 이름은 `profileImage`. 지원 MIME은 JPEG/PNG/WebP, 파일당 최대 5 MiB, 전체 multipart 최대 6 MB. React Native 로컬 파일 URI를 **파일 바이트**로 전송한다. `Content-Type: multipart/form-data`의 boundary는 클라이언트 라이브러리에 맡기며 직접 고정하지 않는다.
 
 | API | `request` JSON |
 | --- | --- |
 | 아기 생성 | `{"babyName":"서아","birthDate":"2026-05-01","gender":"FEMALE"}` |
-| 아기 수정 | 변경할 `babyName?`, `birthDate?`, `gender?`, `removeProfileImage?` 중 최소 하나 |
-| 내 정보 수정 | 변경할 `memberName?`, `removeProfileImage?` 중 최소 하나 |
+| 아기 수정 | 변경할 `babyName?`, `birthDate?`, `gender?`, `profileImageUrl?`, `removeProfileImage?` 중 최소 하나 |
+| 내 정보 수정 | 변경할 `memberName?`, `profileImageUrl?`, `removeProfileImage?` 중 최소 하나 |
 
 `removeProfileImage:true`와 `profileImage` 파일은 동시에 보낼 수 없다. 수정에서 생략한 필드는 유지된다. 이미지 저장소가 비활성화된 DEV에서는 파일 없는 등록/수정을 우선 테스트한다.
+
+이미 업로드된 외부 이미지의 HTTPS URL이 있으면 `request` JSON에 `profileImageUrl`을 넣을 수 있다. 이 경우 파일 part 없이 기존 multipart API를 호출하거나, 같은 경로에 `Content-Type: application/json`으로 요청 본문을 보낸다. `profileImageUrl`은 아기 생성, 아기 수정, 내 정보 수정에 사용 가능하다. URL·파일·`removeProfileImage:true`는 서로 배타적이다. URL은 최대 2048자이며 서버는 URL의 실제 이미지 내용이나 지속 가능성을 확인하지 않는다. 서버가 관리하는 이미지 저장소 URL은 직접 입력할 수 없다.
+
+URL만 보낼 때는 JSON이 간단하다. 인증 헤더는 `Authorization: Bearer <accessToken>`이다.
+
+```http
+POST /api/v1/babies
+Content-Type: application/json
+
+{"babyName":"서아","birthDate":"2026-05-01","gender":"FEMALE","profileImageUrl":"https://cdn.example.com/baby.png"}
+```
+
+```http
+PATCH /api/v1/babies/123
+Content-Type: application/json
+
+{"profileImageUrl":"https://cdn.example.com/baby-new.png"}
+```
+
+```http
+PATCH /api/v1/members/me
+Content-Type: application/json
+
+{"profileImageUrl":"https://cdn.example.com/member.png"}
+```
+
+성공하면 `data.profileImageUrl`에 저장된 URL이 반환되며, 이후 GET에도 같은 외부 URL이 나온다. 이미지는 서버가 다운로드하거나 S3에 복사하지 않으므로 만료되는 서명 URL 대신 지속적으로 접근 가능한 URL을 보낸다. 잘못된 URL은 400 (`INVALID_PROFILE_IMAGE_URL` 또는 `INVALID_BABY_IMAGE_URL`), URL·파일·삭제 플래그를 함께 보내면 400 (`INVALID_PROFILE_UPDATE` 또는 `INVALID_BABY_UPDATE`)이다. 이미지를 지우려면 수정 요청에 `{"removeProfileImage":true}`를 보내고, URL을 유지하려면 `profileImageUrl` 필드를 생략한다.
 
 ### 완료 Care Record 생성
 

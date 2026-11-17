@@ -56,7 +56,8 @@ final class OpenAiHttpGateway implements OpenAiGateway {
     @Override
     public String generate(String model, String instructions, String prompt, int timeoutMs) {
         String body = mapper.writeValueAsString(Map.of(
-                "model", model, "instructions", instructions, "input", prompt,
+                "model", model, "instructions", instructions,
+                "input", prompt + "\nReturn one json object only.",
                 "text", Map.of("format", Map.of("type", "json_object")), "store", false));
         HttpRequest request = request(apiBase.resolve("responses"), timeoutMs)
                 .header("Content-Type", "application/json")

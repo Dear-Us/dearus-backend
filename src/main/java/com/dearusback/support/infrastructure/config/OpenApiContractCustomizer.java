@@ -52,6 +52,7 @@ public class OpenApiContractCustomizer {
                 if ("listBabyMembers".equals(id)) operation.setTags(List.of("Baby Member"));
                 parameters(operation);
                 multipart(operation);
+                imageUrlRequest(operation, mapper);
                 request(operation, mapper);
                 success(operation, mapper);
                 if ("subscribeRecordEvents".equals(id)) {
@@ -133,6 +134,31 @@ public class OpenApiContractCustomizer {
                         .value(Map.of("audio", "<binary WAV file>")));
             }
         }
+    }
+
+    private void imageUrlRequest(Operation operation, ObjectMapper mapper) {
+        if (operation.getRequestBody() == null) return;
+        String id = operation.getOperationId();
+        String schema;
+        String example;
+        switch (id) {
+            case "createBaby" -> {
+                schema = "CreateBabyRequest";
+                example = "{\"babyName\":\"서아\",\"birthDate\":\"2026-05-01\",\"gender\":\"FEMALE\",\"profileImageUrl\":\"https://cdn.example.com/baby.png\"}";
+            }
+            case "updateBaby" -> {
+                schema = "UpdateBabyRequest";
+                example = "{\"profileImageUrl\":\"https://cdn.example.com/baby.png\"}";
+            }
+            case "updateMyProfile" -> {
+                schema = "UpdateMyProfileRequest";
+                example = "{\"profileImageUrl\":\"https://cdn.example.com/profile.png\"}";
+            }
+            default -> { return; }
+        }
+        MediaType json = new MediaType().schema(ref(schema));
+        examples(json, mapper, Map.of("외부 이미지 URL", example));
+        operation.getRequestBody().getContent().addMediaType("application/json", json);
     }
 
     private void request(Operation operation, ObjectMapper mapper) {

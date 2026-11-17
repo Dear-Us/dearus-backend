@@ -11,6 +11,8 @@ Swagger UI 오른쪽 상단 **Authorize**에 소셜·게스트 로그인 또는 
 
 Multipart API(MEMBER-02, BABY-02/04)는 `request` part를 `Content-Type: application/json`으로 보내고, 선택적인 `profileImage` part에는 JPEG/PNG/WebP 파일을 붙인다. Baby 등록의 JSON 예시는 `{"babyName":"하늘","birthDate":"2026-01-01","gender":"FEMALE"}`이다. 사진 제거와 파일 업로드를 함께 요청할 수 없다. Swagger의 multipart 스키마에는 `request`의 JSON encoding과 이미지 binary 필드가 명시되어 있다.
 
+외부 이미지 URL을 이미 확보한 경우 MEMBER-02, BABY-02/04의 같은 경로에 `Content-Type: application/json` 요청 본문으로 `profileImageUrl`을 보낼 수 있다. 기존 multipart `request` part에도 이 필드를 사용할 수 있다. URL은 HTTPS, 최대 2048자이며 파일 업로드·사진 제거와 동시에 보낼 수 없다. DB에는 URL을 저장하고 응답에도 반환한다. 서버가 관리하는 S3 객체 URL이나 만료되는 서명 URL을 전달하지 않는다.
+
 VOICE-01은 `POST /api/v1/babies/{babyId}/voice-commands`에 `Idempotency-Key` UUID 헤더와 필수 `audio` multipart part를 보낸다. 접수되면 202와 `Location`이 반환되며 GET으로 상태를 폴링한다. 확인이 필요한 초안은 `/confirm`, 미완료 요청은 `/cancel`로 처리한다. 필드·상태·오류와 프론트 연동 흐름은 [Voice API 상세 명세](api/voice-api-notion.md)를 기준으로 한다. 기본 비활성 상태의 업로드는 503이며, Railway에서 OpenAI를 사용할 때는 [Railway 설정](railway-openai-deployment.md)을 적용한다.
 
 Care 생성 요청에는 수유·수면·기저귀·체온·투약·기타의 실제 수락 가능한 예시가 있고, `detail`은 유형에 따라 `oneOf`로 표시된다. Care/Growth 수정·삭제의 409는 단순 토큰 만료가 아니라 상태 또는 version 충돌이므로 상세 재조회 후 처리한다. EVENT-01은 JSON 응답이 아닌 `text/event-stream` 장기 연결이다. Swagger UI가 SSE를 끝까지 소비하지 못할 수 있으므로 모바일에서는 Bearer 헤더를 지원하는 SSE 클라이언트를 사용하고 재연결 후 HOME-01을 조회한다.

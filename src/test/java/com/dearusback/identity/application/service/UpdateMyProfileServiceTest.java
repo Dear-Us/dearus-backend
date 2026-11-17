@@ -75,6 +75,39 @@ class UpdateMyProfileServiceTest {
     }
 
     @Test
+    void externalUrlPersistsWithoutUploadAndCleansUpPreviousOwnedImage() {
+        var transaction = mock(UpdateMyProfileTransactionService.class);
+        var storage = mock(ProfileImageStoragePort.class);
+        String externalUrl = "https://cdn.example.com/profile.png";
+        when(transaction.update(1L, null, false, externalUrl))
+                .thenReturn(updated("기존 이름", externalUrl, OLD_IMAGE));
+
+        MyProfileResult result = new UpdateMyProfileService(transaction, storage)
+                .update(new UpdateMyProfileCommand(1L, null, false, null, externalUrl));
+
+        assertThat(result.profileImageUrl()).isEqualTo(externalUrl);
+        verify(storage, never()).store(any(), any());
+        verify(storage).deleteOwnedImage(1L, OLD_IMAGE);
+    }
+
+    @Test
+    void invalidOrConflictingExternalUrlsAreRejectedBeforeWrite() {
+        var transaction = mock(UpdateMyProfileTransactionService.class);
+        var storage = mock(ProfileImageStoragePort.class);
+        var service = new UpdateMyProfileService(transaction, storage);
+        assertError(() -> service.update(new UpdateMyProfileCommand(1L, null, false, null,
+                "http://cdn.example.com/image.png")), IdentityErrorCode.INVALID_PROFILE_IMAGE_URL);
+        assertError(() -> service.update(new UpdateMyProfileCommand(1L, null, false, image(),
+                "https://cdn.example.com/image.png")), IdentityErrorCode.INVALID_PROFILE_UPDATE);
+        assertError(() -> service.update(new UpdateMyProfileCommand(1L, null, true, null,
+                "https://cdn.example.com/image.png")), IdentityErrorCode.INVALID_PROFILE_UPDATE);
+        when(storage.owns(1L, NEW_IMAGE)).thenReturn(true);
+        assertError(() -> service.update(new UpdateMyProfileCommand(1L, null, false, null, NEW_IMAGE)),
+                IdentityErrorCode.INVALID_PROFILE_IMAGE_URL);
+        verify(transaction, never()).update(any(), any(), eq(false), any());
+    }
+
+    @Test
     void noChangesConflictAndInvalidNamesFailBeforeStorage() {
         var transaction = mock(UpdateMyProfileTransactionService.class);
         var storage = mock(ProfileImageStoragePort.class);

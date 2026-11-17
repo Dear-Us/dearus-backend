@@ -17,6 +17,11 @@ public final class UnavailableBabyImageStorageAdapter implements BabyProfileImag
     }
 
     @Override
+    public boolean owns(String imageUrl) {
+        return false;
+    }
+
+    @Override
     public void deleteOwnedImage(String imageUrl) {
         // No object could have been uploaded while storage was unavailable.
     }

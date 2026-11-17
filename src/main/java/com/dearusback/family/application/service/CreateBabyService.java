@@ -8,6 +8,7 @@ import com.dearusback.family.domain.exception.FamilyErrorCode;
 import com.dearusback.family.domain.exception.FamilyException;
 import com.dearusback.identity.application.model.BabyRegistrationMember;
 import com.dearusback.identity.application.port.in.BabyRegistrationMemberAccess;
+import com.dearusback.support.domain.model.ExternalImageUrl;
 import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,6 +33,18 @@ public class CreateBabyService implements CreateBabyUseCase {
 
     @Override
     public CreateBabyResult create(CreateBabyCommand command) {
+        if (command.profileImage() != null && command.profileImageUrl() != null) {
+            throw new FamilyException(FamilyErrorCode.INVALID_BABY_UPDATE);
+        }
+        String externalUrl;
+        try {
+            externalUrl = ExternalImageUrl.normalize(command.profileImageUrl());
+        } catch (IllegalArgumentException exception) {
+            throw new FamilyException(FamilyErrorCode.INVALID_BABY_IMAGE_URL);
+        }
+        if (externalUrl != null && storage.owns(externalUrl)) {
+            throw new FamilyException(FamilyErrorCode.INVALID_BABY_IMAGE_URL);
+        }
         BabyRegistrationMember member = members.requireActiveMember(command.memberId());
         String name = BabyInputValidator.normalizeName(command.babyName());
         var birthDate = BabyInputValidator.parseBirthDate(command.birthDate(), member.timezone(), clock);
@@ -45,7 +58,8 @@ public class CreateBabyService implements CreateBabyUseCase {
             }
         }
         try {
-            return transaction.create(command.memberId(), name, birthDate, gender, uploadedUrl);
+            return transaction.create(command.memberId(), name, birthDate, gender,
+                    uploadedUrl == null ? externalUrl : uploadedUrl);
         } catch (RuntimeException original) {
             if (uploadedUrl != null) {
                 try {
