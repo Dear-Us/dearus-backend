@@ -67,6 +67,10 @@ public final class Member {
         );
     }
 
+    public static Member registerGuest() {
+        return new Member(null, "게스트", null, DEFAULT_TIMEZONE, null, null, false, List.of());
+    }
+
     public void updateProviderEmail(String providerUserId, String providerEmail) {
         socialAccounts.stream()
                 .filter(account -> account.providerUserId().equals(providerUserId))

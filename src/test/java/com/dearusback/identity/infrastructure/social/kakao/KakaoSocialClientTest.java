@@ -75,6 +75,14 @@ class KakaoSocialClientTest {
         server.verify();
     }
 
+    @Test
+    void disabledKakaoLoginDoesNotCallProvider() {
+        KakaoSocialClient disabledClient = new KakaoSocialClient(RestClient.create("https://kapi.test"), 0);
+
+        assertErrorCode(() -> disabledClient.verify("token"), IdentityErrorCode.SOCIAL_PROVIDER_UNAVAILABLE);
+        server.verify();
+    }
+
     private void assertErrorCode(Runnable operation, IdentityErrorCode expected) {
         assertThatThrownBy(operation::run)
                 .isInstanceOf(BusinessException.class)

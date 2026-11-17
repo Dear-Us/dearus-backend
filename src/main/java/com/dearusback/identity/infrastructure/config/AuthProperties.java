@@ -3,7 +3,7 @@ package com.dearusback.identity.infrastructure.config;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.net.URI;
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -27,13 +27,13 @@ public record AuthProperties(
     }
 
     public record Google(
-            @NotBlank String clientId,
+            String clientId,
             @NotNull URI jwkSetUri
     ) {
     }
 
     public record Kakao(
-            @Positive long appId,
+            @PositiveOrZero long appId,
             @NotNull URI baseUrl
     ) {
     }

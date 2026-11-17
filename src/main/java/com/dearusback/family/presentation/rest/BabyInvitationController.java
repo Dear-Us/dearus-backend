@@ -8,6 +8,9 @@ import com.dearusback.family.domain.exception.FamilyException;
 import com.dearusback.family.presentation.dto.CreateBabyInvitationResponse;
 import com.dearusback.family.presentation.dto.InvitationSummaryResponse;
 import com.dearusback.support.presentation.response.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +24,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/babies/{babyId}/invitations")
+@Tag(name = "Invitation", description = "72시간 유효한 단일 사용 공동 보호자 초대")
+@SecurityRequirement(name = "bearerAuth")
 public class BabyInvitationController {
 
     private final CreateBabyInvitationUseCase invitations;
@@ -36,6 +41,7 @@ public class BabyInvitationController {
     }
 
     @PostMapping
+    @Operation(operationId = "createInvitation", summary = "공동 보호자 초대 링크 생성", tags = "Invitation", description = "ACTIVE OWNER만 생성한다. CAREGIVER 역할의 72시간 유효한 단일 사용 초대를 만들고 invitationUrl을 반환한다. 원문 토큰은 서버 DB에 저장하지 않는다.")
     public ResponseEntity<ApiResponse<CreateBabyInvitationResponse>> create(
             @AuthenticationPrincipal Long memberId, @PathVariable Long babyId) {
         if (babyId == null || babyId <= 0) {
@@ -46,6 +52,7 @@ public class BabyInvitationController {
     }
 
     @GetMapping
+    @Operation(operationId = "listInvitations", summary = "초대 목록 조회", tags = "Invitation", description = "ACTIVE OWNER가 해당 Baby의 초대 목록과 PENDING/ACCEPTED/CANCELED/EXPIRED 상태를 조회한다. 원문 토큰과 URL은 목록에 포함되지 않는다.")
     public ResponseEntity<ApiResponse<List<InvitationSummaryResponse>>> list(
             @AuthenticationPrincipal Long memberId, @PathVariable Long babyId) {
         if (babyId == null || babyId <= 0) {
@@ -56,6 +63,7 @@ public class BabyInvitationController {
     }
 
     @DeleteMapping("/{invitationId}")
+    @Operation(operationId = "cancelInvitation", summary = "초대 취소", tags = "Invitation", description = "ACTIVE OWNER가 PENDING 초대만 취소한다. 이미 수락·취소·만료된 초대는 상태 충돌로 처리한다.")
     public ResponseEntity<ApiResponse<Void>> cancel(
             @AuthenticationPrincipal Long memberId, @PathVariable Long babyId,
             @PathVariable Long invitationId) {

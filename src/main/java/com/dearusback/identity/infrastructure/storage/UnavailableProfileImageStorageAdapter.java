@@ -19,6 +19,11 @@ final class UnavailableProfileImageStorageAdapter implements ProfileImageStorage
     }
 
     @Override
+    public String readUrl(Long memberId, String storedImageUrl) {
+        return storedImageUrl;
+    }
+
+    @Override
     public void deleteOwnedImage(Long memberId, String imageUrl) {
         // No storage client exists when image storage is disabled.
     }

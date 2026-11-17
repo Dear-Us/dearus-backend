@@ -52,6 +52,19 @@ class SocialLoginTransactionServiceTest {
     }
 
     @Test
+    void guestLoginCreatesIndependentMemberAndRefreshSession() {
+        SocialLoginResult first = service.loginGuest();
+        SocialLoginResult second = service.loginGuest();
+
+        assertThat(first.newMember()).isTrue();
+        assertThat(first.member().memberName()).isEqualTo("게스트");
+        assertThat(first.member().memberId()).isNotEqualTo(second.member().memberId());
+        assertThat(memberRepository.count()).isEqualTo(2);
+        assertThat(memberRepository.findById(first.member().memberId()).orElseThrow().socialAccounts()).isEmpty();
+        assertThat(refreshSessionRepository.sessions).hasSize(2);
+    }
+
+    @Test
     void registersNewGoogleMemberAndSocialAccount() {
         SocialLoginResult result = service.loginOrRegister(identity(
                 SocialProvider.GOOGLE,
@@ -183,11 +196,11 @@ class SocialLoginTransactionServiceTest {
     private static final class InMemoryMemberRepository implements MemberRepository {
 
         private final AtomicLong sequence = new AtomicLong();
-        private final Map<String, Member> members = new LinkedHashMap<>();
+        private final Map<Long, Member> members = new LinkedHashMap<>();
 
         @Override
         public Optional<Member> findById(Long memberId) {
-            return members.values().stream().filter(member -> member.id().equals(memberId)).findFirst();
+            return Optional.ofNullable(members.get(memberId));
         }
 
         @Override
@@ -197,14 +210,15 @@ class SocialLoginTransactionServiceTest {
 
         @Override
         public Optional<Member> findBySocialAccount(SocialProvider provider, String providerUserId) {
-            return Optional.ofNullable(members.get(key(provider, providerUserId)));
+            return members.values().stream().filter(member -> member.socialAccounts().stream()
+                    .anyMatch(account -> account.provider() == provider
+                            && account.providerUserId().equals(providerUserId))).findFirst();
         }
 
         @Override
         public Member save(Member member) {
             Member saved = member.id() == null ? withId(member, sequence.incrementAndGet()) : member;
-            SocialAccount account = saved.socialAccounts().getFirst();
-            members.put(key(account.provider(), account.providerUserId()), saved);
+            members.put(saved.id(), saved);
             return saved;
         }
 
@@ -239,8 +253,7 @@ class SocialLoginTransactionServiceTest {
         }
 
         void seed(Member member) {
-            SocialAccount account = member.socialAccounts().getFirst();
-            members.put(key(account.provider(), account.providerUserId()), member);
+            members.put(member.id(), member);
             sequence.updateAndGet(current -> Math.max(current, member.id()));
         }
 
@@ -261,9 +274,6 @@ class SocialLoginTransactionServiceTest {
             );
         }
 
-        private String key(SocialProvider provider, String providerUserId) {
-            return provider + ":" + providerUserId;
-        }
     }
 
     private static final class CapturingRefreshSessionRepository implements RefreshSessionRepository {

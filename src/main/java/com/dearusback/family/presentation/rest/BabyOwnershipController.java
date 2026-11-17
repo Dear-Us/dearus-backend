@@ -1,4 +1,7 @@
 package com.dearusback.family.presentation.rest;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 import com.dearusback.family.application.port.in.TransferBabyOwnershipUseCase;
 import com.dearusback.family.domain.exception.FamilyErrorCode;
@@ -17,6 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/babies/{babyId}/owner")
+@Tag(name = "Baby Member")
+@SecurityRequirement(name = "bearerAuth")
 public class BabyOwnershipController {
 
     private final TransferBabyOwnershipUseCase transferOwnership;
@@ -26,6 +31,7 @@ public class BabyOwnershipController {
     }
 
     @PatchMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(operationId = "transferBabyOwnership", summary = "OWNER 권한 이전", tags = "Baby Member", description = "현재 ACTIVE OWNER가 같은 Baby의 ACTIVE CAREGIVER를 대상으로 지정한다. 하나의 트랜잭션에서 기존 OWNER는 CAREGIVER, 대상은 OWNER가 된다. 초대·보호자 관계 자체는 유지된다.")
     public ResponseEntity<ApiResponse<TransferBabyOwnershipResponse>> transfer(
             @AuthenticationPrincipal Long requesterId, @PathVariable Long babyId,
             @RequestBody TransferBabyOwnershipRequest request) {

@@ -20,11 +20,20 @@ public class SecurityConfiguration {
                 .securityMatcher(request -> {
                     String path = request.getRequestURI().substring(request.getContextPath().length());
                     if ("GET".equals(request.getMethod())
+                            && path.equals("/actuator/health")) {
+                        return true;
+                    }
+                    if ("GET".equals(request.getMethod())
+                            && (path.equals("/swagger-ui.html") || path.startsWith("/swagger-ui/")
+                            || path.equals("/v3/api-docs") || path.startsWith("/v3/api-docs/"))) {
+                        return true;
+                    }
+                    if ("GET".equals(request.getMethod())
                             && path.matches("/api/v1/invitations/[^/]+")) {
                         return true;
                     }
                     return "POST".equals(request.getMethod()) && switch (path) {
-                        case "/api/v1/auth/login", "/api/v1/auth/reissue", "/api/v1/auth/logout" -> true;
+                        case "/api/v1/auth/login", "/api/v1/auth/guest", "/api/v1/auth/reissue", "/api/v1/auth/logout" -> true;
                         default -> false;
                     };
                 })

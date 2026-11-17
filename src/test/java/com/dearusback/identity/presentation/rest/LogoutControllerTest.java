@@ -50,7 +50,8 @@ class LogoutControllerTest {
     }
 
     private MockMvc mvc(LogoutUseCase useCase) {
-        return MockMvcBuilders.standaloneSetup(new AuthController(command -> null, command -> null, useCase))
+        return MockMvcBuilders.standaloneSetup(new AuthController(command -> null, () -> null, command -> null, useCase,
+                        (memberId, imageUrl) -> imageUrl))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

@@ -1,6 +1,7 @@
 package com.dearusback.identity.presentation.dto;
 
 import com.dearusback.identity.application.model.SocialLoginResult;
+import java.util.function.BiFunction;
 
 public record SocialLoginResponse(
         String accessToken,
@@ -12,7 +13,8 @@ public record SocialLoginResponse(
         MemberResponse member
 ) {
 
-    public static SocialLoginResponse from(SocialLoginResult result) {
+    public static SocialLoginResponse from(SocialLoginResult result,
+                                           BiFunction<Long, String, String> imageUrlReader) {
         return new SocialLoginResponse(
                 result.accessToken(),
                 result.refreshToken(),
@@ -23,7 +25,7 @@ public record SocialLoginResponse(
                 new MemberResponse(
                         result.member().memberId(),
                         result.member().memberName(),
-                        result.member().profileImageUrl(),
+                        imageUrlReader.apply(result.member().memberId(), result.member().profileImageUrl()),
                         result.member().lastSelectedBabyId()
                 )
         );

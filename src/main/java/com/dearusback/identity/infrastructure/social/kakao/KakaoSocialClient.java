@@ -41,6 +41,9 @@ public class KakaoSocialClient implements SocialProviderClient {
 
     @Override
     public VerifiedSocialIdentity verify(String providerToken) {
+        if (expectedAppId == 0) {
+            throw providerUnavailable();
+        }
         try {
             KakaoTokenInfo tokenInfo = restClient.get()
                     .uri("/v1/user/access_token_info")
