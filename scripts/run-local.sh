@@ -26,7 +26,7 @@ config_value() {
     awk -v key="$1" 'index($0, key "=") == 1 {print substr($0, length(key) + 2); exit}' .env
 }
 
-for key in DB_URL DB_USERNAME DB_PASSWORD DEARUS_JWT_SECRET_BASE64 KAKAO_APP_ID; do
+for key in DB_URL DB_USERNAME DB_PASSWORD DEARUS_JWT_SECRET_BASE64; do
     value="$(config_value "$key")"
     if [[ -z "$value" || "$value" == *'{'*'}'* || "$value" == '<'*'>' ]]; then
         fail "$key must be filled in .env."
@@ -43,7 +43,10 @@ if [[ ! "$db_url" =~ (^|[?&])sslMode=verify-full(&|$) ]]; then
     fail 'DB_URL must enable certificate and hostname verification with sslMode=verify-full.'
 fi
 
-[[ "$(config_value KAKAO_APP_ID)" =~ ^[0-9]+$ ]] || fail 'KAKAO_APP_ID must be numeric.'
+kakao_app_id="$(config_value KAKAO_APP_ID)"
+if [[ -n "$kakao_app_id" && ! "$kakao_app_id" =~ ^[1-9][0-9]*$ ]]; then
+    fail 'KAKAO_APP_ID must be a positive number when configured.'
+fi
 
 jwt_secret="$(config_value DEARUS_JWT_SECRET_BASE64)"
 if ! jwt_bytes="$(printf '%s' "$jwt_secret" | openssl base64 -d -A | wc -c | tr -d '[:space:]')"; then

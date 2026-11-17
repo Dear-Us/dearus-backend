@@ -8,7 +8,7 @@
 | `DB_USERNAME` | REQUIRED_BOOT | 없음 |
 | `DB_PASSWORD` | REQUIRED_BOOT, SECRET | 없음 |
 | `DEARUS_JWT_SECRET_BASE64` | REQUIRED_BOOT, SECRET | 없음. Base64 디코딩 후 최소 256비트 |
-| `KAKAO_APP_ID` | REQUIRED_BOOT | 없음. 양의 숫자여야 함 |
+| `KAKAO_APP_ID` | REQUIRED_FEATURE | 기본 `0`; Kakao 로그인 사용 시 양의 숫자 필요. 미설정이면 Kakao 로그인만 사용 불가 |
 | `GOOGLE_CLIENT_ID` | OPTIONAL | 빈 값이면 부팅은 가능하지만 Google 로그인 검증 불가 |
 | `SWAGGER_ENABLED` | OPTIONAL | `true` |
 | `DEARUS_OPENAPI_SERVER_URL` | OPTIONAL | 빈 값. 추가 OpenAPI 서버 URL |

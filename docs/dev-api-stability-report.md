@@ -126,7 +126,7 @@
 |---|---|---|
 | REQUIRED_BOOT | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | MariaDB datasource 및 Flyway/JPA 검증에 필요 |
 | REQUIRED_BOOT | `DEARUS_JWT_SECRET_BASE64` | Access JWT 서명/검증에 필요 |
-| REQUIRED_BOOT | `KAKAO_APP_ID` | 기본값 없는 property; 실제 Kakao 검증에도 필요 |
+| REQUIRED_FEATURE | `KAKAO_APP_ID` | 게스트 로그인 추가 이후 기본값 `0`; Kakao 로그인 사용 시 양의 숫자 필요 |
 | REQUIRED_FEATURE | `GOOGLE_CLIENT_ID` | Google ID Token audience 검증. 미설정이면 Google login 불가 |
 | REQUIRED_FEATURE | `DEARUS_INVITATION_BASE_URL` | 초대 링크 생성. 미설정이면 해당 요청 실패 |
 | REQUIRED_FEATURE | `PROFILE_IMAGE_STORAGE_BUCKET`, `PROFILE_IMAGE_STORAGE_PUBLIC_BASE_URL`, `PROFILE_IMAGE_STORAGE_REGION` | `PROFILE_IMAGE_STORAGE_ENABLED=true`이고 이미지 업로드를 쓸 때 필요; S3 IAM 권한도 필요 |

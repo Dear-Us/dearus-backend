@@ -10,7 +10,6 @@ Railway 백엔드 서비스의 **Variables**에 다음 값을 설정한다. 값�
 | `DB_USERNAME` | DB 사용자명 |
 | `DB_PASSWORD` | DB 비밀번호 |
 | `DEARUS_JWT_SECRET_BASE64` | Base64 인코딩한 32바이트 이상 랜덤 비밀값 |
-| `KAKAO_APP_ID` | 카카오 앱의 숫자 ID |
 
 기존 `.env`의 DB URL은 사설 RDS 주소이므로 Railway에서 접근 가능한 DB 주소로 바꿔야 한다. DB에는 Flyway 마이그레이션을 실행할 권한이 필요하다. Railway MySQL 서비스를 사용할 경우 MariaDB JDBC 드라이버 및 현재 마이그레이션과의 호환성을 별도로 검증한다.
 
@@ -34,6 +33,7 @@ Railway 백엔드 서비스의 **Variables**에 다음 값을 설정한다. 값�
 | 변수 | 언제 필요한가 |
 | --- | --- |
 | `GOOGLE_CLIENT_ID` | Google **로그인**을 사용할 때. Google STT 설정과 무관 |
+| `KAKAO_APP_ID` | 카카오 로그인을 사용할 때 앱의 숫자 ID. 게스트 로그인만 쓰면 미설정 가능 |
 | `DEARUS_INVITATION_BASE_URL` | 초대 링크를 생성할 때, 앱 링크용 HTTPS URL |
 | `SWAGGER_ENABLED` | 운영에서 Swagger 공개를 끄려면 `false` |
 | `DEARUS_OPENAPI_SERVER_URL` | Swagger에 배포 서버 URL을 추가하려면 HTTPS URL |

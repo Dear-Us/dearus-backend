@@ -75,7 +75,6 @@ def main():
                 "DB_USERNAME": "root",
                 "DB_PASSWORD": password,
                 "DEARUS_JWT_SECRET_BASE64": base64.b64encode(secrets.token_bytes(32)).decode(),
-                "KAKAO_APP_ID": "1",
                 "PORT": "18082",
                 "SWAGGER_ENABLED": "false",
             })
