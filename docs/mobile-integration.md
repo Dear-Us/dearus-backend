@@ -11,6 +11,7 @@
 
 ## 2. Authentication
 
+- 소셜 SDK를 사용할 수 없을 때 `POST /api/v1/auth/guest`를 본문 없이 호출하면 새 게스트 회원과 기존 로그인 응답 형식의 Access/Refresh Token을 받는다. 저장된 토큰이 있으면 먼저 `GET /api/v1/members/me` 또는 Refresh Token 재발급을 사용한다. 게스트 로그인은 호출마다 새 계정이며 소셜 로그인 계정으로 데이터가 자동 승계되지 않는다. 상세 흐름은 [게스트 로그인 계약](api/guest-login.md)을 따른다.
 - 앱은 Google/Kakao/Naver SDK에서 로그인한 뒤 `POST /api/v1/auth/login`에 JSON `{ "provider": "GOOGLE|KAKAO|NAVER", "providerToken": "..." }`을 보낸다. Google은 ID token, Kakao·Naver는 access token을 백엔드에 전달한다. 앱은 DearUs JWT를 직접 생성하지 않는다.
 - 성공 응답의 `data`에는 `accessToken`, `refreshToken`, `tokenType`(`Bearer`), 두 `*ExpiresInSeconds`, `isNewMember`, `member`가 있다. 일반 인증 요청은 `Authorization: Bearer {accessToken}` 헤더를 사용한다. URL query에 DearUs access token을 넣지 않는다.
 - `POST /api/v1/auth/reissue`와 `POST /api/v1/auth/logout`은 각각 JSON `{ "refreshToken": "..." }`을 받으며 Access Token 없이 호출할 수 있다. 로그인·재발급은 Refresh Token 원문을 응답으로 돌려주지만 서버에는 해시만 저장한다.

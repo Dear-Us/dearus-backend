@@ -1,13 +1,13 @@
 # DearUs API / Swagger
 
-현재 `dev`에 구현된 45개 API의 실제 계약을 OpenAPI 3.1로 제공한다. VOICE-01~04의 HTTP 계약과 Google Speech-to-Text V2 / Vertex AI Gemini 및 OpenAI 어댑터 코드가 포함된다. `DEARUS_VOICE_ENABLED=false`가 기본이며 제공자 설정과 배포·실호출 검증 전에는 음성 처리 성공을 보장하지 않는다. 앱 연동 방법은 [모바일 연동 가이드](mobile-integration.md)에 설명되어 있다.
+현재 `dev`에 구현된 46개 API의 실제 계약을 OpenAPI 3.1로 제공한다. 게스트 로그인과 VOICE-01~04의 HTTP 계약, Google Speech-to-Text V2 / Vertex AI Gemini 및 OpenAI 어댑터 코드가 포함된다. `DEARUS_VOICE_ENABLED=false`가 기본이며 제공자 설정과 배포·실호출 검증 전에는 음성 처리 성공을 보장하지 않는다. 앱 연동 방법은 [모바일 연동 가이드](mobile-integration.md)에 설명되어 있다.
 
 - 로컬 Swagger UI: `http://localhost:8080/swagger-ui/index.html`
 - 로컬 OpenAPI JSON: `http://localhost:8080/v3/api-docs`
 - 배포 환경: 실제 HTTPS API 호스트 뒤에 각각 `/swagger-ui/index.html`, `/v3/api-docs`를 붙인다. 소스에는 운영 도메인을 고정하지 않는다. OpenAPI `servers`의 첫 항목은 현재 접속 호스트를 쓰는 `/`이고, 필요하면 `DEARUS_OPENAPI_SERVER_URL` 환경변수로 추가 절대 URL을 지정한다.
 - 문서 활성화: 기본값 `SWAGGER_ENABLED=true`; 운영에서도 협업용으로 열려 있다. 비활성화하려면 `false`로 설정한다.
 
-Swagger UI 오른쪽 상단 **Authorize**에 AUTH-01 로그인 또는 AUTH-02 재발급 응답의 `accessToken`을 입력한다. HTTP Bearer 스키마이므로 UI가 `Authorization: Bearer {JWT}` 헤더를 보낸다. AUTH-01~03과 초대 토큰 미리보기는 공개 API이며 그 외 보호 API는 JWT가 필요하다. 문서 경로가 공개되어도 보호 API의 인증은 해제되지 않는다. Refresh Token, 소셜 Provider Token, 초대 원문 Token은 URL·콘솔 로그·공유 스크린샷에 남기지 않는다.
+Swagger UI 오른쪽 상단 **Authorize**에 소셜·게스트 로그인 또는 재발급 응답의 `accessToken`을 입력한다. HTTP Bearer 스키마이므로 UI가 `Authorization: Bearer {JWT}` 헤더를 보낸다. Auth의 로그인·게스트 로그인·재발급·로그아웃과 초대 토큰 미리보기는 공개 API이며 그 외 보호 API는 JWT가 필요하다. 문서 경로가 공개되어도 보호 API의 인증은 해제되지 않는다. Refresh Token, 소셜 Provider Token, 초대 원문 Token은 URL·콘솔 로그·공유 스크린샷에 남기지 않는다. [게스트 로그인 상세 계약](api/guest-login.md)을 참고한다.
 
 Multipart API(MEMBER-02, BABY-02/04)는 `request` part를 `Content-Type: application/json`으로 보내고, 선택적인 `profileImage` part에는 JPEG/PNG/WebP 파일을 붙인다. Baby 등록의 JSON 예시는 `{"babyName":"하늘","birthDate":"2026-01-01","gender":"FEMALE"}`이다. 사진 제거와 파일 업로드를 함께 요청할 수 없다. Swagger의 multipart 스키마에는 `request`의 JSON encoding과 이미지 binary 필드가 명시되어 있다.
 

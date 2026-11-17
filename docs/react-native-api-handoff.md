@@ -2,6 +2,8 @@
 
 > 2026-10-08 AWS DEV 기준의 이전 전달 문서다. Voice API 상태와 Railway/OpenAI 배포 설정은 현재 구현을 반영한 [모바일 연동 가이드](mobile-integration.md) 및 [Railway 설정](railway-openai-deployment.md)을 우선한다.
 
+> 게스트 로그인과 Railway 프론트 전환은 [현재 프론트 게스트 연동 가이드](frontend-guest-handoff.md)를 사용한다. 아래의 ALB 주소와 41개 API 목록은 이전 시점의 기록이다.
+
 기준: 2026-10-08 `dev` 백엔드 Controller/DTO와 배포된 OpenAPI를 대조했다. 이 문서는 프론트엔드 Codex에게 **첨부해서 전달하는 작업 지시서**다. 실제 요청·응답 스키마의 최종 기준은 배포 OpenAPI이며, 배포 버전이 바뀌면 다시 확인한다.
 
 ## 프론트엔드 Codex에 그대로 보낼 프롬프트

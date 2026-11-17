@@ -48,3 +48,5 @@ Railway 백엔드 서비스의 **Variables**에 다음 값을 설정한다. 값�
 | `DEARUS_IMAGE_PRESIGNED_GET_TTL` | 이미지 읽기 URL 유효 기간. 기본 `PT1H` |
 
 OpenAI 음성 처리에는 `DEARUS_GOOGLE_CREDENTIALS_JSON`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `DEARUS_STT_LOCATION`이 필요하지 않다. 배포 후 `/actuator/health`로 부팅 상태를 확인한다. 실제 음성 처리 성공은 새 키와 Railway 환경에서 업로드·결과 조회로 확인해야 한다.
+
+게스트 로그인에는 새 환경변수나 DB 마이그레이션이 없다. 배포 후 Railway HTTPS 도메인에서 본문 없는 `POST /api/v1/auth/guest`를 호출하고, 발급된 JWT로 `GET /api/v1/members/me` 및 아기 API를 확인한다. 프론트의 `EXPO_PUBLIC_API_URL`은 이 HTTPS 도메인만 지정하며 끝에 `/api/v1`이나 `/`를 붙이지 않는다. 프론트 앱은 `EXPO_PUBLIC_USE_MOCK=false`로 설정한 뒤 Expo를 캐시 초기화해 다시 시작한다. 기존 AWS ALB 주소를 계속 사용하면 Railway 배포 코드는 호출되지 않는다.
