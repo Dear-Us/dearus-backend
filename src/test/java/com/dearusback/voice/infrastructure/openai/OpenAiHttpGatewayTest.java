@@ -70,6 +70,7 @@ class OpenAiHttpGatewayTest {
         var request = new ObjectMapper().readTree(body.get());
         assertThat(request.path("store").asBoolean()).isFalse();
         assertThat(request.path("text").path("format").path("type").asText()).isEqualTo("json_object");
+        assertThat(request.path("input").asText()).contains("json object");
     }
 
     @Test
