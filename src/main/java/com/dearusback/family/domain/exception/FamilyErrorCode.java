@@ -23,6 +23,7 @@ public enum FamilyErrorCode implements ErrorCode {
     INVALID_BIRTH_DATE("INVALID_BIRTH_DATE", "생년월일이 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     INVALID_GENDER("INVALID_GENDER", "성별이 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     INVALID_BABY_IMAGE("INVALID_BABY_IMAGE", "지원하지 않는 아기 프로필 이미지입니다.", ErrorType.BAD_REQUEST),
+    INVALID_BABY_IMAGE_URL("INVALID_BABY_IMAGE_URL", "아기 프로필 이미지 URL이 올바르지 않습니다.", ErrorType.BAD_REQUEST),
     BABY_IMAGE_TOO_LARGE("BABY_IMAGE_TOO_LARGE", "아기 프로필 이미지는 5MB 이하여야 합니다.", ErrorType.PAYLOAD_TOO_LARGE),
     BABY_IMAGE_STORAGE_UNAVAILABLE("BABY_IMAGE_STORAGE_UNAVAILABLE", "아기 프로필 이미지를 처리할 수 없습니다.", ErrorType.SERVICE_UNAVAILABLE);
 

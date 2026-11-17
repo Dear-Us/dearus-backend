@@ -642,6 +642,32 @@ class IdentityMariaDbIntegrationTest {
     }
 
     @Test
+    void memberImageUrlJsonPatchPersistsWithoutUploading() throws Exception {
+        SocialLoginResult account = register();
+        Long memberId = account.member().memberId();
+        String url = "https://cdn.example.com/members/profile.png";
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + account.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"profileImageUrl\":\"" + url + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.profileImageUrl").value(url));
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM member WHERE member_id = ?",
+                String.class, memberId)).isEqualTo(url);
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + account.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"profileImageUrl\":\"http://cdn.example.com/invalid.png\"}"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM member WHERE member_id = ?",
+                String.class, memberId)).isEqualTo(url);
+    }
+
+    @Test
     void member02RemoveImageClearsDbAndDeletesOnlyOwnedUrl() throws Exception {
         SocialLoginResult account = register();
         Long memberId = account.member().memberId();

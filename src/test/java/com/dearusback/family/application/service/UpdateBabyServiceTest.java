@@ -79,6 +79,21 @@ class UpdateBabyServiceTest {
         verify(storage, never()).store(any());
     }
 
+    @Test
+    void externalUrlIsPassedToTransactionWithoutUploading() {
+        when(members.requireActiveMember(1L)).thenReturn(new BabyRegistrationMember(1L, "Asia/Seoul"));
+        when(babies.findAccessibleBaby(1L, 2L)).thenReturn(Optional.of(summary(BabyMemberRole.OWNER)));
+        String url = "https://cdn.example.com/baby.png";
+        MyBabySummary updated = new MyBabySummary(2L, "도윤", LocalDate.of(2020, 1, 1),
+                BabyGender.MALE, url, BabyMemberRole.OWNER);
+        when(transaction.update(1L, 2L, null, null, null, false, url))
+                .thenReturn(new UpdateBabyTransactionService.UpdatedBaby(updated, null));
+
+        assertThat(service.update(new UpdateBabyCommand(1L, 2L, null, null, null, false, null, url)))
+                .isEqualTo(updated);
+        verify(storage, never()).store(any());
+    }
+
     private MyBabySummary summary(BabyMemberRole role) {
         return new MyBabySummary(2L, "도윤", LocalDate.of(2020, 1, 1), BabyGender.MALE, null, role);
     }

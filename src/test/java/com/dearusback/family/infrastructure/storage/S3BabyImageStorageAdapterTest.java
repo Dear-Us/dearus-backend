@@ -41,6 +41,8 @@ class S3BabyImageStorageAdapterTest {
                 "image/jpeg");
         String url = storage.store(image);
         assertThat(url).isEqualTo("https://images.example/babies/profile/" + id + ".jpg");
+        assertThat(storage.owns(url)).isTrue();
+        assertThat(storage.owns("https://foreign.example/babies/profile/" + id + ".jpg")).isFalse();
         ArgumentCaptor<PutObjectRequest> uploaded = ArgumentCaptor.forClass(PutObjectRequest.class);
         verify(client).putObject(uploaded.capture(), any(RequestBody.class));
         assertThat(uploaded.getValue().key()).isEqualTo("babies/profile/" + id + ".jpg");

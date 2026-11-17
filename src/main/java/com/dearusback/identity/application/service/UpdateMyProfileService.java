@@ -8,6 +8,7 @@ import com.dearusback.identity.application.port.out.ProfileImageStoragePort;
 import com.dearusback.identity.domain.exception.IdentityErrorCode;
 import com.dearusback.identity.domain.exception.IdentityException;
 import com.dearusback.identity.domain.model.Member;
+import com.dearusback.support.domain.model.ExternalImageUrl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -27,13 +28,25 @@ public class UpdateMyProfileService implements UpdateMyProfileUseCase {
 
     @Override
     public MyProfileResult update(UpdateMyProfileCommand command) {
-        if (command.profileImage() != null && command.removeProfileImage()) {
+        if ((command.profileImage() != null && command.removeProfileImage())
+                || (command.profileImageUrl() != null
+                && (command.profileImage() != null || command.removeProfileImage()))) {
             throw new IdentityException(IdentityErrorCode.INVALID_PROFILE_UPDATE);
         }
-        if (command.memberName() == null && command.profileImage() == null && !command.removeProfileImage()) {
+        if (command.memberName() == null && command.profileImage() == null
+                && command.profileImageUrl() == null && !command.removeProfileImage()) {
             throw new IdentityException(IdentityErrorCode.INVALID_PROFILE_UPDATE);
         }
         String normalizedName = command.memberName() == null ? null : Member.normalizeName(command.memberName());
+        String externalUrl;
+        try {
+            externalUrl = ExternalImageUrl.normalize(command.profileImageUrl());
+        } catch (IllegalArgumentException exception) {
+            throw new IdentityException(IdentityErrorCode.INVALID_PROFILE_IMAGE_URL);
+        }
+        if (externalUrl != null && storage.owns(command.memberId(), externalUrl)) {
+            throw new IdentityException(IdentityErrorCode.INVALID_PROFILE_IMAGE_URL);
+        }
         StoredProfileImage uploaded = null;
         if (command.profileImage() != null) {
             try {
@@ -46,7 +59,7 @@ public class UpdateMyProfileService implements UpdateMyProfileUseCase {
         UpdateMyProfileTransactionService.UpdatedProfile result;
         try {
             result = transaction.update(command.memberId(), normalizedName, command.removeProfileImage(),
-                    uploaded == null ? null : uploaded.url());
+                    uploaded == null ? externalUrl : uploaded.url());
         } catch (RuntimeException original) {
             if (uploaded != null) {
                 deleteQuietly(command.memberId(), uploaded.url());
@@ -54,7 +67,8 @@ public class UpdateMyProfileService implements UpdateMyProfileUseCase {
             throw original;
         }
 
-        if ((uploaded != null || command.removeProfileImage()) && result.previousImageUrl() != null
+        if ((uploaded != null || externalUrl != null || command.removeProfileImage())
+                && result.previousImageUrl() != null
                 && !result.previousImageUrl().equals(result.profile().profileImageUrl())) {
             deleteQuietly(command.memberId(), result.previousImageUrl());
         }

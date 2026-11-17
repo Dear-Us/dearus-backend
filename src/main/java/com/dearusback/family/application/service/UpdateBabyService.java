@@ -9,6 +9,7 @@ import com.dearusback.family.domain.exception.FamilyException;
 import com.dearusback.family.domain.model.BabyGender;
 import com.dearusback.identity.application.model.BabyRegistrationMember;
 import com.dearusback.identity.application.port.in.BabyRegistrationMemberAccess;
+import com.dearusback.support.domain.model.ExternalImageUrl;
 import java.time.Clock;
 import java.time.LocalDate;
 import org.slf4j.Logger;
@@ -37,13 +38,16 @@ public class UpdateBabyService implements UpdateBabyUseCase {
 
     @Override
     public MyBabySummary update(UpdateBabyCommand command) {
-        if (command.profileImage() != null && command.removeProfileImage()) {
+        if ((command.profileImage() != null && command.removeProfileImage())
+                || (command.profileImageUrl() != null
+                && (command.profileImage() != null || command.removeProfileImage()))) {
             throw new FamilyException(FamilyErrorCode.INVALID_BABY_UPDATE);
         }
         BabyRegistrationMember member = members.requireActiveMember(command.memberId());
         owners.requireOwner(command.memberId(), command.babyId(), FamilyErrorCode.BABY_UPDATE_FORBIDDEN);
         if (command.babyName() == null && command.birthDate() == null && command.gender() == null
-                && command.profileImage() == null && !command.removeProfileImage()) {
+                && command.profileImage() == null && command.profileImageUrl() == null
+                && !command.removeProfileImage()) {
             throw new FamilyException(FamilyErrorCode.INVALID_BABY_UPDATE);
         }
 
@@ -51,6 +55,15 @@ public class UpdateBabyService implements UpdateBabyUseCase {
         LocalDate birthDate = command.birthDate() == null ? null
                 : BabyInputValidator.parseBirthDate(command.birthDate(), member.timezone(), clock);
         BabyGender gender = command.gender() == null ? null : BabyInputValidator.parseGender(command.gender());
+        String externalUrl;
+        try {
+            externalUrl = ExternalImageUrl.normalize(command.profileImageUrl());
+        } catch (IllegalArgumentException exception) {
+            throw new FamilyException(FamilyErrorCode.INVALID_BABY_IMAGE_URL);
+        }
+        if (externalUrl != null && storage.owns(externalUrl)) {
+            throw new FamilyException(FamilyErrorCode.INVALID_BABY_IMAGE_URL);
+        }
         String uploadedUrl = null;
         if (command.profileImage() != null) {
             try {
@@ -63,7 +76,7 @@ public class UpdateBabyService implements UpdateBabyUseCase {
         UpdateBabyTransactionService.UpdatedBaby updated;
         try {
             updated = transaction.update(command.memberId(), command.babyId(), name, birthDate, gender,
-                    command.removeProfileImage(), uploadedUrl);
+                    command.removeProfileImage(), uploadedUrl == null ? externalUrl : uploadedUrl);
         } catch (RuntimeException original) {
             if (uploadedUrl != null) {
                 deleteQuietly(uploadedUrl);
@@ -71,7 +84,8 @@ public class UpdateBabyService implements UpdateBabyUseCase {
             throw original;
         }
 
-        if ((uploadedUrl != null || command.removeProfileImage()) && updated.previousImageUrl() != null
+        if ((uploadedUrl != null || externalUrl != null || command.removeProfileImage())
+                && updated.previousImageUrl() != null
                 && !updated.previousImageUrl().equals(updated.baby().profileImageUrl())) {
             deleteQuietly(updated.previousImageUrl());
         }

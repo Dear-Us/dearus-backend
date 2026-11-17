@@ -69,6 +69,11 @@ public enum IdentityErrorCode implements ErrorCode {
             "지원하지 않는 프로필 이미지입니다.",
             ErrorType.BAD_REQUEST
     ),
+    INVALID_PROFILE_IMAGE_URL(
+            "INVALID_PROFILE_IMAGE_URL",
+            "프로필 이미지 URL이 올바르지 않습니다.",
+            ErrorType.BAD_REQUEST
+    ),
     PROFILE_IMAGE_TOO_LARGE(
             "PROFILE_IMAGE_TOO_LARGE",
             "프로필 이미지는 5MB 이하여야 합니다.",

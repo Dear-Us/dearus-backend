@@ -106,7 +106,7 @@ class OpenApiContractTest {
                 }
             }
         }
-        assertThat(mapped).isEqualTo(46);
+        assertThat(mapped).isEqualTo(49);
         JsonNode voice = api.path("paths");
         assertThat(voice.path("/api/v1/babies/{babyId}/voice-commands").has("post")).isTrue();
         assertThat(voice.path("/api/v1/babies/{babyId}/voice-commands/{voiceRequestId}").has("get")).isTrue();
@@ -123,6 +123,8 @@ class OpenApiContractTest {
         JsonNode paths = api.path("paths");
         JsonNode babyCreate = paths.path("/api/v1/babies").path("post");
         JsonNode multipart = babyCreate.path("requestBody").path("content").path("multipart/form-data");
+        assertThat(babyCreate.path("requestBody").path("content").path("application/json")
+                .path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/CreateBabyRequest");
         assertThat(multipart.path("encoding").path("request").path("contentType").asText())
                 .isEqualTo("application/json");
         assertThat(multipart.path("schema").path("required").toString()).contains("request");

@@ -53,4 +53,31 @@ class CreateBabyServiceTest {
                         .isEqualTo(FamilyErrorCode.INVALID_BIRTH_DATE));
         verify(storage, never()).store(org.mockito.ArgumentMatchers.any());
     }
+
+    @Test
+    void externalUrlIsPassedToTransactionWithoutUploading() {
+        when(members.requireActiveMember(1L)).thenReturn(new BabyRegistrationMember(1L, "Asia/Seoul"));
+        String url = "https://cdn.example.com/baby.png";
+        CreateBabyResult expected = new CreateBabyResult(7L, "아기", LocalDate.of(2026, 8, 16),
+                BabyGender.MALE, url, BabyMemberRole.OWNER);
+        when(transaction.create(1L, "아기", LocalDate.of(2026, 8, 16), BabyGender.MALE, url))
+                .thenReturn(expected);
+
+        assertThat(service.create(new CreateBabyCommand(1L, "아기", "2026-08-16", "MALE", null, url)))
+                .isEqualTo(expected);
+        verify(storage, never()).store(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void managedStorageUrlCannotBeSubmittedAsExternalUrl() {
+        String url = "https://images.example/babies/profile/12345678-1234-1234-1234-123456789abc.png";
+        when(storage.owns(url)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.create(new CreateBabyCommand(
+                1L, "아기", "2026-08-16", "MALE", null, url)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(error -> assertThat(((BusinessException) error).errorCode())
+                        .isEqualTo(FamilyErrorCode.INVALID_BABY_IMAGE_URL));
+        verify(storage, never()).store(org.mockito.ArgumentMatchers.any());
+    }
 }

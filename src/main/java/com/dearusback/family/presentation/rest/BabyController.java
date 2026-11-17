@@ -19,6 +19,7 @@ import com.dearusback.family.presentation.dto.CreateBabyRequest;
 import com.dearusback.family.presentation.dto.UpdateBabyRequest;
 import com.dearusback.support.presentation.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.io.IOException;
@@ -34,6 +35,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -107,8 +109,16 @@ public class BabyController {
                 BabyResponse.from(getBaby.getBaby(memberId, babyId), babyImageUrls::readUrl)));
     }
 
+    @PatchMapping(value = "/{babyId}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Hidden
+    public ResponseEntity<ApiResponse<BabyResponse>> updateByUrl(
+            @AuthenticationPrincipal Long memberId, @PathVariable Long babyId,
+            @RequestBody UpdateBabyRequest request) {
+        return update(memberId, babyId, request, null);
+    }
+
     @PatchMapping(value = "/{babyId}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(operationId = "updateBaby", summary = "아기 정보 수정", tags = "Baby", description = "ACTIVE OWNER만 수정한다. multipart의 request part는 application/json, profileImage part는 선택 사항이다. 생략한 필드는 유지되고 removeProfileImage=true는 이미지를 제거한다. 제거와 업로드를 동시에 할 수 없다. JPEG/PNG/WebP, 최대 5 MiB.")
+    @Operation(operationId = "updateBaby", summary = "아기 정보 수정", tags = "Baby", description = "ACTIVE OWNER만 수정한다. multipart의 request part는 application/json, profileImage part는 선택 사항이다. JSON 요청 본문으로 profileImageUrl을 전달할 수도 있다. 생략한 필드는 유지되고 removeProfileImage=true는 이미지를 제거한다. URL·제거·업로드는 동시에 사용할 수 없다. JPEG/PNG/WebP, 최대 5 MiB.")
     public ResponseEntity<ApiResponse<BabyResponse>> update(
             @AuthenticationPrincipal Long memberId, @PathVariable Long babyId,
             @RequestPart("request") UpdateBabyRequest request,
@@ -116,7 +126,9 @@ public class BabyController {
         if (babyId == null || babyId <= 0) {
             throw new FamilyException(FamilyErrorCode.INVALID_BABY_ID);
         }
-        if (request == null || (profileImage != null && request.shouldRemoveProfileImage())) {
+        if (request == null || (profileImage != null && request.shouldRemoveProfileImage())
+                || (request.profileImageUrl() != null
+                && (profileImage != null || request.shouldRemoveProfileImage()))) {
             throw new FamilyException(FamilyErrorCode.INVALID_BABY_UPDATE);
         }
         BabyImageUpload image = null;
@@ -132,16 +144,26 @@ public class BabyController {
         }
         return ResponseEntity.ok(ApiResponse.success(BabyResponse.from(updateBaby.update(new UpdateBabyCommand(
                 memberId, babyId, request.babyName(), request.birthDate(), request.gender(),
-                request.shouldRemoveProfileImage(), image)), babyImageUrls::readUrl)));
+                request.shouldRemoveProfileImage(), image, request.profileImageUrl())), babyImageUrls::readUrl)));
+    }
+
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Hidden
+    public ResponseEntity<ApiResponse<BabyResponse>> createByUrl(
+            @AuthenticationPrincipal Long memberId, @RequestBody CreateBabyRequest request) {
+        return create(memberId, request, null);
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(operationId = "createBaby", summary = "아기 등록", tags = "Baby", description = "multipart의 필수 request JSON part에 babyName, YYYY-MM-DD birthDate, gender를 담는다. profileImage는 선택적 파일 part다. JPEG/PNG/WebP, 최대 5 MiB. 생성자는 OWNER가 되고 lastSelectedBabyId가 null이면 새 Baby로 초기화된다.")
+    @Operation(operationId = "createBaby", summary = "아기 등록", tags = "Baby", description = "multipart의 필수 request JSON part에 babyName, YYYY-MM-DD birthDate, gender를 담는다. profileImage는 선택적 파일 part다. JSON 요청 본문으로 profileImageUrl을 전달할 수도 있다. URL과 파일은 동시에 사용할 수 없다. JPEG/PNG/WebP, 최대 5 MiB. 생성자는 OWNER가 되고 lastSelectedBabyId가 null이면 새 Baby로 초기화된다.")
     public ResponseEntity<ApiResponse<BabyResponse>> create(
             @AuthenticationPrincipal Long memberId,
             @RequestPart("request") CreateBabyRequest request,
             @RequestPart(value = "profileImage", required = false) MultipartFile profileImage
     ) {
+        if (request == null || (profileImage != null && request.profileImageUrl() != null)) {
+            throw new FamilyException(FamilyErrorCode.INVALID_BABY_IMAGE);
+        }
         BabyImageUpload image = null;
         if (profileImage != null) {
             if (profileImage.getSize() > BabyImageUpload.MAX_BYTES) {
@@ -155,6 +177,6 @@ public class BabyController {
         }
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(BabyResponse.from(
                 useCase.create(new CreateBabyCommand(memberId, request.babyName(), request.birthDate(),
-                        request.gender(), image)), babyImageUrls::readUrl)));
+                        request.gender(), image, request.profileImageUrl())), babyImageUrls::readUrl)));
     }
 }

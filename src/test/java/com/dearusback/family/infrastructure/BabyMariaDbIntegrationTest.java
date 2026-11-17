@@ -184,6 +184,45 @@ class BabyMariaDbIntegrationTest {
     }
 
     @Test
+    void jsonImageUrlIsPersistedOnCreateAndUpdate() throws Exception {
+        long memberId = insertMember("Asia/Seoul", false);
+        String authorization = "Bearer " + token(memberId);
+        String firstUrl = "https://cdn.example.com/babies/first.png";
+        JsonNode created = mapper.readTree(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/v1/babies")
+                        .header("Authorization", authorization)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"babyName\":\"아기\",\"birthDate\":\"2020-01-01\",\"gender\":\"FEMALE\",\"profileImageUrl\":\"" + firstUrl + "\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        long babyId = created.path("data").path("babyId").asLong();
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM baby WHERE baby_id = ?", String.class, babyId))
+                .isEqualTo(firstUrl);
+
+        String secondUrl = "https://cdn.example.com/babies/second.png";
+        mvc.perform(patch("/api/v1/babies/{babyId}", babyId)
+                        .header("Authorization", authorization)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"profileImageUrl\":\"" + secondUrl + "\"}"))
+                .andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM baby WHERE baby_id = ?", String.class, babyId))
+                .isEqualTo(secondUrl);
+        JsonNode multipartCreated = send(token(memberId),
+                "{\"babyName\":\"다른 아기\",\"birthDate\":\"2020-01-01\",\"gender\":\"MALE\",\"profileImageUrl\":\"" + firstUrl + "\"}",
+                null);
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM baby WHERE baby_id = ?", String.class,
+                multipartCreated.path("data").path("babyId").asLong())).isEqualTo(firstUrl);
+        assertThat(storage.stored).isEmpty();
+
+        mvc.perform(patch("/api/v1/babies/{babyId}", babyId)
+                        .header("Authorization", authorization)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"profileImageUrl\":\"http://cdn.example.com/invalid.png\"}"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT profile_image_url FROM baby WHERE baby_id = ?", String.class, babyId))
+                .isEqualTo(secondUrl);
+    }
+
+    @Test
     void storageFailureReturns503WithoutDatabaseChanges() throws Exception {
         long memberId = insertMember("Asia/Seoul", false);
         long before = babyCount();
@@ -2797,6 +2836,11 @@ class BabyMariaDbIntegrationTest {
         @Override
         public String readUrl(String storedImageUrl) {
             return storedImageUrl;
+        }
+
+        @Override
+        public boolean owns(String imageUrl) {
+            return imageUrl != null && imageUrl.startsWith("https://images.example/babies/profile/");
         }
 
         @Override
