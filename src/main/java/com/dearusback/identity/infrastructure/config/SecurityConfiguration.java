@@ -33,7 +33,7 @@ public class SecurityConfiguration {
                         return true;
                     }
                     return "POST".equals(request.getMethod()) && switch (path) {
-                        case "/api/v1/auth/login", "/api/v1/auth/reissue", "/api/v1/auth/logout" -> true;
+                        case "/api/v1/auth/login", "/api/v1/auth/guest", "/api/v1/auth/reissue", "/api/v1/auth/logout" -> true;
                         default -> false;
                     };
                 })

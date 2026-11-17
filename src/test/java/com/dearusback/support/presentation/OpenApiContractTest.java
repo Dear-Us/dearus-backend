@@ -42,6 +42,7 @@ class OpenApiContractTest {
         assertThat(api.path("components").path("securitySchemes").path("bearerAuth")
                 .path("scheme").asText()).isEqualTo("bearer");
         assertThat(api.path("paths").has("/api/v1/auth/login")).isTrue();
+        assertThat(api.path("paths").has("/api/v1/auth/guest")).isTrue();
         assertThat(api.path("paths").has("/api/v1/babies/{babyId}/records")).isTrue();
         assertThat(api.path("paths").has("/api/v1/babies/{babyId}/events")).isTrue();
         assertThat(api.path("paths").has("/api/v1/babies/{babyId}/growth-records")).isTrue();
@@ -69,9 +70,9 @@ class OpenApiContractTest {
                 operationCount++;
             }
         }
-        assertThat(operationCount).isEqualTo(45);
+        assertThat(operationCount).isEqualTo(46);
         assertThat(operationsByTag).containsExactlyInAnyOrderEntriesOf(Map.ofEntries(
-                Map.entry("Auth", 3), Map.entry("Member", 4), Map.entry("Baby", 5),
+                Map.entry("Auth", 4), Map.entry("Member", 4), Map.entry("Baby", 5),
                 Map.entry("Baby Member", 4), Map.entry("Invitation", 5), Map.entry("Care Record", 10),
                 Map.entry("Home", 1), Map.entry("Event", 1), Map.entry("Voice", 4),
                 Map.entry("Statistics", 3), Map.entry("Growth", 5)));
@@ -80,6 +81,8 @@ class OpenApiContractTest {
         assertThat(tags).containsExactlyInAnyOrder("Auth", "Member", "Baby", "Baby Member", "Invitation",
                 "Care Record", "Home", "Event", "Statistics", "Growth", "Voice");
         assertThat(api.path("paths").path("/api/v1/auth/login").path("post")
+                .path("security").isEmpty()).isTrue();
+        assertThat(api.path("paths").path("/api/v1/auth/guest").path("post")
                 .path("security").isEmpty()).isTrue();
         assertThat(api.path("paths").path("/api/v1/members/me").path("get")
                 .path("security").isEmpty()).isFalse();
@@ -103,7 +106,7 @@ class OpenApiContractTest {
                 }
             }
         }
-        assertThat(mapped).isEqualTo(45);
+        assertThat(mapped).isEqualTo(46);
         JsonNode voice = api.path("paths");
         assertThat(voice.path("/api/v1/babies/{babyId}/voice-commands").has("post")).isTrue();
         assertThat(voice.path("/api/v1/babies/{babyId}/voice-commands/{voiceRequestId}").has("get")).isTrue();

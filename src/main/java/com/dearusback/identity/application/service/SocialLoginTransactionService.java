@@ -5,6 +5,7 @@ import com.dearusback.identity.application.model.IssuedAccessToken;
 import com.dearusback.identity.application.model.SocialLoginResult;
 import com.dearusback.identity.application.model.SocialLoginResult.MemberResult;
 import com.dearusback.identity.application.model.VerifiedSocialIdentity;
+import com.dearusback.identity.application.port.in.GuestLoginUseCase;
 import com.dearusback.identity.application.port.out.AccessTokenIssuer;
 import com.dearusback.identity.application.port.out.RefreshSessionRepository;
 import com.dearusback.identity.application.port.out.RefreshTokenGenerator;
@@ -22,7 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class SocialLoginTransactionService {
+public class SocialLoginTransactionService implements GuestLoginUseCase {
 
     private final MemberRepository memberRepository;
     private final RefreshSessionRepository refreshSessionRepository;
@@ -48,6 +49,13 @@ public class SocialLoginTransactionService {
         this.refreshTokenHasher = refreshTokenHasher;
         this.tokenPolicy = tokenPolicy;
         this.clock = clock;
+    }
+
+    @Override
+    @Transactional
+    public SocialLoginResult loginGuest() {
+        Member member = memberRepository.save(Member.registerGuest());
+        return issueSession(member, true);
     }
 
     @Transactional

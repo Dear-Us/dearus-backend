@@ -77,6 +77,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.testcontainers.mariadb.MariaDBContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.ObjectMapper;
 
 @Testcontainers
 @AutoConfigureMockMvc
@@ -117,6 +118,9 @@ class IdentityMariaDbIntegrationTest {
     private MockMvc mvc;
 
     @Autowired
+    private ObjectMapper mapper;
+
+    @Autowired
     private JwtEncoder jwtEncoder;
 
     @Autowired
@@ -124,6 +128,38 @@ class IdentityMariaDbIntegrationTest {
 
     @Autowired
     private FakeProfileImageStorage profileImages;
+
+    @Test
+    void guestLoginPersistsMemberAndSupportsProtectedApiAndRefresh() throws Exception {
+        String body = mvc.perform(post("/api/v1/auth/guest"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.isNewMember").value(true))
+                .andExpect(jsonPath("$.data.member.memberName").value("게스트"))
+                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.refreshToken").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+        var data = mapper.readTree(body).path("data");
+        long memberId = data.path("member").path("memberId").asLong();
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM member WHERE member_id = ? AND email IS NULL",
+                Integer.class, memberId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM social_account WHERE member_id = ?",
+                Integer.class, memberId)).isZero();
+
+        mvc.perform(get("/api/v1/members/me")
+                        .header("Authorization", "Bearer " + data.path("accessToken").asText()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.memberId").value(memberId))
+                .andExpect(jsonPath("$.data.socialAccounts").isEmpty());
+
+        mvc.perform(post("/api/v1/auth/reissue")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"" + data.path("refreshToken").asText() + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.refreshToken").isNotEmpty());
+    }
 
     @Test
     void v1MemberReceivesDefaultTimezoneAfterV2Migration() throws Exception {

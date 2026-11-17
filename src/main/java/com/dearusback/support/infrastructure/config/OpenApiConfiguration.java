@@ -37,11 +37,11 @@ public class OpenApiConfiguration {
                                 .type(SecurityScheme.Type.HTTP)
                                 .scheme("bearer")
                                 .bearerFormat("JWT")
-                                .description("AUTH-01/02에서 받은 DearUs Access Token을 입력하세요.")
+                                .description("로그인 또는 재발급에서 받은 DearUs Access Token을 입력하세요.")
                 ))
                 .servers(servers)
                 .tags(List.of(
-                        tag("Auth", "소셜 로그인과 세션"),
+                        tag("Auth", "소셜·게스트 로그인과 세션"),
                         tag("Member", "회원 정보"),
                         tag("Baby", "아기"),
                         tag("Baby Member", "공동 보호자"),

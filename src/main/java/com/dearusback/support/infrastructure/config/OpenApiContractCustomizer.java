@@ -29,7 +29,7 @@ import tools.jackson.databind.ObjectMapper;
 @Configuration
 public class OpenApiContractCustomizer {
 
-    private static final Set<String> PUBLIC = Set.of("login", "reissueToken", "logout", "getInvitation");
+    private static final Set<String> PUBLIC = Set.of("login", "loginGuest", "reissueToken", "logout", "getInvitation");
     private static final Set<String> CREATED = Set.of("createBaby", "createInvitation", "createCareRecord",
             "startCareRecord", "createGrowthRecord");
     private static final Set<String> CONFLICT = Set.of("login", "withdrawMember",
@@ -38,7 +38,7 @@ public class OpenApiContractCustomizer {
             "updateCareRecord", "deleteCareRecord", "updateGrowthRecord", "deleteGrowthRecord",
             "uploadVoiceCommand", "confirmVoiceCommand", "cancelVoiceCommand");
     private static final Set<String> NO_BAD_REQUEST = Set.of("listBabies", "getMyProfile", "withdrawMember",
-            "getInvitation");
+            "getInvitation", "loginGuest");
 
     @Bean
     OpenApiCustomizer actualContractCustomizer(ObjectMapper mapper) {

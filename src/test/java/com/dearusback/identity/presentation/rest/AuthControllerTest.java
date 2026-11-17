@@ -18,6 +18,26 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class AuthControllerTest {
 
     @Test
+    void guestLoginRequiresNoProviderTokenAndReturnsTokens() throws Exception {
+        SocialLoginResult guest = new SocialLoginResult(
+                "guest-access", "guest-refresh", "Bearer", 1800, 2592000, true,
+                new MemberResult(42L, "게스트", null, null)
+        );
+
+        MockMvcBuilders.standaloneSetup(new AuthController(command -> null, () -> guest,
+                        command -> null, command -> {}, (memberId, imageUrl) -> imageUrl))
+                .setControllerAdvice(new GlobalExceptionHandler()).build()
+                .perform(post("/api/v1/auth/guest"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.accessToken").value("guest-access"))
+                .andExpect(jsonPath("$.data.refreshToken").value("guest-refresh"))
+                .andExpect(jsonPath("$.data.isNewMember").value(true))
+                .andExpect(jsonPath("$.data.member.memberId").value(42))
+                .andExpect(jsonPath("$.data.member.memberName").value("게스트"));
+    }
+
+    @Test
     void returnsContractedLoginResponse() throws Exception {
         SocialLoginUseCase useCase = command -> new SocialLoginResult(
                 "access-token",
@@ -108,7 +128,7 @@ class AuthControllerTest {
 
     private MockMvc mockMvc(SocialLoginUseCase useCase) {
         return MockMvcBuilders
-                .standaloneSetup(new AuthController(useCase, command -> null, command -> {},
+                .standaloneSetup(new AuthController(useCase, () -> null, command -> null, command -> {},
                         (memberId, imageUrl) -> imageUrl))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
